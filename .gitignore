@@ -145,8 +145,8 @@ cython_debug/
 # VS Code
 .vscode/
 
-# Streamlit
-.streamlit/
+# Streamlit - ignore secrets but keep config
+.streamlit/secrets.toml
 
 # Project specific - sensitive token files
 *.token
