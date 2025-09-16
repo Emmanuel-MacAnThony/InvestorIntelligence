@@ -63,9 +63,17 @@ if not search_email:
     st.info("👆 Enter an email address to search for email threads")
     st.stop()
 
-# Validate email format
-if "@" not in search_email or "." not in search_email.split("@")[1]:
-    st.error("Please enter a valid email address")
+
+# Validate one or more emails (comma/semicolon-separated)
+def _split_emails_ui(raw: str):
+    parts = [p.strip() for p in (raw or "").replace(";", ",").split(",")]
+    emails = [p for p in parts if p]
+    return emails
+
+
+emails_for_ui = _split_emails_ui(search_email)
+if not emails_for_ui or not any("@" in e for e in emails_for_ui):
+    st.error("Please enter one or more valid email addresses")
     st.stop()
 
 # OAuth validation
@@ -88,397 +96,397 @@ lookback_days = int(os.environ.get("THREAD_LOOKBACK_DAYS", "1095"))
 # Create record object for compatibility with existing Gmail client
 search_record = {"name": search_email.split("@")[0], "email": search_email}
 
-tabs = st.tabs(mailboxes)
-for tab, mbox in zip(tabs, mailboxes):
-    with tab:
-        st.subheader(mbox)
-        # Show scopes for this mailbox to verify permissions
-        try:
-            store_sc = get_token_store()
-            scopes = get_token_scopes(store_sc, mbox)
-            if scopes:
-                st.caption("Scopes: " + ", ".join(sorted(scopes)))
-        except Exception:
-            pass
 
-        # Loading skeleton while fetching threads
-        ph = st.empty()
-        with ph.container():
-            st.markdown("### Loading threads…")
-            sk1 = st.empty()
-            sk2 = st.empty()
-            sk3 = st.empty()
-            with sk1.container():
-                st.progress(10, text="Preparing mailbox")
-            with sk2.container():
-                st.progress(35, text="Searching recent threads")
-            with sk3.container():
-                st.progress(60, text="Fetching thread metadata")
+def _render_mailbox_section(mbox: str, target_email: str):
+    st.subheader(f"{mbox} • {target_email}")
+    # Show scopes for this mailbox to verify permissions
+    try:
+        store_sc = get_token_store()
+        scopes = get_token_scopes(store_sc, mbox)
+        if scopes:
+            st.caption("Scopes: " + ", ".join(sorted(scopes)))
+    except Exception:
+        pass
 
-        resp = client.list_threads(
-            mbox, search_record["email"], lookback_days=lookback_days
+    # Loading skeleton while fetching threads
+    ph = st.empty()
+    with ph.container():
+        st.markdown("### Loading threads…")
+        sk1 = st.empty()
+        sk2 = st.empty()
+        sk3 = st.empty()
+        with sk1.container():
+            st.progress(10, text="Preparing mailbox")
+        with sk2.container():
+            st.progress(35, text="Searching recent threads")
+        with sk3.container():
+            st.progress(60, text="Fetching thread metadata")
+
+    resp = client.list_threads(mbox, target_email, lookback_days=lookback_days)
+    ph.empty()
+
+    if resp.get("error") == "not_connected":
+        st.warning("Mailbox not connected. Go to Mailboxes to connect this account.")
+        return
+    if resp.get("error") == "missing_readonly_scope":
+        st.error(
+            "This mailbox was authorized without gmail.readonly. Disconnect and reconnect granting full read access."
         )
-        ph.empty()
+        return
+    if resp.get("error") == "insufficient_scope":
+        st.error(
+            "Insufficient permissions for Gmail search. You need 'gmail.readonly' scope (not just 'gmail.metadata'). Please reconnect this mailbox with full read permissions."
+        )
+        return
+    if resp.get("error"):
+        st.error(f"Error: {resp['error']}")
+        return
 
-        if resp.get("error") == "not_connected":
-            st.warning(
-                "Mailbox not connected. Go to Mailboxes to connect this account."
-            )
-            continue
-        if resp.get("error") == "missing_readonly_scope":
-            st.error(
-                "This mailbox was authorized without gmail.readonly. Disconnect and reconnect granting full read access."
-            )
-            continue
-        if resp.get("error") == "insufficient_scope":
-            st.error(
-                "Insufficient permissions for Gmail search. You need 'gmail.readonly' scope (not just 'gmail.metadata'). Please reconnect this mailbox with full read permissions."
-            )
-            continue
-        if resp.get("error"):
-            st.error(f"Error: {resp['error']}")
-            continue
+    threads = resp.get("threads", [])
+    if resp.get("extendedWindow"):
+        st.caption("Extended search window (up to 3 years) applied.")
+    if resp.get("last6"):
+        st.caption("Returning up to the last 6 matching threads by messages.")
+    if resp.get("fallback"):
+        st.warning(
+            f"⚠️ Using slow fallback scan mode; scanned {resp.get('scanned', 0)} recent messages. For better performance, ensure you have 'gmail.readonly' scope."
+        )
+    elif resp.get("search_query"):
+        st.success(f"✅ Used efficient Gmail search: {resp.get('search_query')}")
 
-        threads = resp.get("threads", [])
-        if resp.get("extendedWindow"):
-            st.caption("Extended search window (up to 3 years) applied.")
-        if resp.get("last6"):
-            st.caption("Returning up to the last 6 matching threads by messages.")
-        if resp.get("fallback"):
-            st.warning(
-                f"⚠️ Using slow fallback scan mode; scanned {resp.get('scanned', 0)} recent messages. For better performance, ensure you have 'gmail.readonly' scope."
-            )
-        elif resp.get("search_query"):
-            st.success(f"✅ Used efficient Gmail search: {resp.get('search_query')}")
+    if not threads:
+        st.info("No threads found for this contact in the selected timeframe.")
+        return
 
-        if not threads:
-            st.info("No threads found for this contact in the selected timeframe.")
-            continue
+    # Display basic thread info
+    for th in threads[:10]:
+        tid = th.get("id")
+        with st.expander(f"{mbox} • {target_email} • Thread {tid}"):
+            full = client.get_thread(mbox, tid)
+            if full.get("error"):
+                st.error(f"Error loading thread: {full['error']}")
+                continue
+            msgs = full.get("messages", [])
+            has_full_messages = full.get("has_full_messages", False)
+            scope_limitation = full.get("scope_limitation")
 
-        # Display basic thread info
-        for th in threads[:10]:
-            tid = th.get("id")
-            with st.expander(f"Thread {tid}"):
-                full = client.get_thread(mbox, tid)
-                if full.get("error"):
-                    st.error(f"Error loading thread: {full['error']}")
-                    continue
-                msgs = full.get("messages", [])
-                has_full_messages = full.get("has_full_messages", False)
-                scope_limitation = full.get("scope_limitation")
+            if scope_limitation:
+                st.warning(
+                    "⚠️ Message bodies not available - 'gmail.readonly' scope required"
+                )
+            elif has_full_messages:
+                st.success("✅ Full message content retrieved")
 
-                if scope_limitation:
-                    st.warning(
-                        "⚠️ Message bodies not available - 'gmail.readonly' scope required"
-                    )
-                elif has_full_messages:
-                    st.success("✅ Full message content retrieved")
+            st.write(f"**Messages: {len(msgs)}**")
 
-                st.write(f"**Messages: {len(msgs)}**")
-
-                # Helper functions for message processing
-                def _b64url_decode(s: str) -> str:
-                    try:
-                        if not s:
-                            return ""
-                        pad = "=" * (-len(s) % 4)
-                        return base64.urlsafe_b64decode(s + pad).decode(
-                            "utf-8", errors="ignore"
-                        )
-                    except Exception:
+            # Helper functions for message processing
+            def _b64url_decode(s: str) -> str:
+                try:
+                    if not s:
                         return ""
+                    pad = "=" * (-len(s) % 4)
+                    return base64.urlsafe_b64decode(s + pad).decode(
+                        "utf-8", errors="ignore"
+                    )
+                except Exception:
+                    return ""
 
-                def _extract_bodies(part: dict):
-                    html, text = "", ""
-                    if not part:
-                        return html, text
-                    mime = part.get("mimeType", "")
-                    data = part.get("body", {}).get("data")
+            def _extract_bodies(part: dict):
+                html, text = "", ""
+                if not part:
+                    return html, text
+                mime = part.get("mimeType", "")
+                data = part.get("body", {}).get("data")
 
-                    # Handle multipart/alternative by preferring HTML part
-                    if mime.startswith("multipart/alternative"):
-                        parts = part.get("parts", []) or []
-                        # Prefer the last part (often richest), then choose HTML over text
-                        for child in reversed(parts):
-                            ch_html, ch_text = _extract_bodies(child)
-                            if ch_html:
-                                return ch_html, ch_text or text
-                            if ch_text and not text:
-                                text = ch_text
-                        return html, text
-
-                    if data:
-                        decoded = _b64url_decode(data)
-                        if decoded:
-                            if mime == "text/html" and not html:
-                                # Clean and normalize HTML with BeautifulSoup
-                                soup = BeautifulSoup(decoded, "html.parser")
-                                html = str(soup)
-                            elif mime == "text/plain" and not text:
-                                text = decoded
-
-                    # Check child parts
+                # Handle multipart/alternative by preferring HTML part
+                if mime.startswith("multipart/alternative"):
                     parts = part.get("parts", []) or []
-                    for child in parts:
+                    # Prefer the last part (often richest), then choose HTML over text
+                    for child in reversed(parts):
                         ch_html, ch_text = _extract_bodies(child)
-                        if not html and ch_html:
-                            html = ch_html
-                        if not text and ch_text:
+                        if ch_html:
+                            return ch_html, ch_text or text
+                        if ch_text and not text:
                             text = ch_text
-                        if html and text:
-                            break
                     return html, text
 
-                # Message navigation and display - ONE MESSAGE AT A TIME
-                if msgs:
-                    total_messages = len(msgs[:10])
+                if data:
+                    decoded = _b64url_decode(data)
+                    if decoded:
+                        if mime == "text/html" and not html:
+                            # Clean and normalize HTML with BeautifulSoup
+                            soup = BeautifulSoup(decoded, "html.parser")
+                            html = str(soup)
+                        elif mime == "text/plain" and not text:
+                            text = decoded
 
-                    # Thread overview toggle
-                    show_overview = st.checkbox(
-                        "📋 Show thread overview",
-                        key=f"overview_{tid}",
-                        help="View clean previews of all messages in this thread",
-                    )
+                # Check child parts
+                parts = part.get("parts", []) or []
+                for child in parts:
+                    ch_html, ch_text = _extract_bodies(child)
+                    if not html and ch_html:
+                        html = ch_html
+                    if not text and ch_text:
+                        text = ch_text
+                    if html and text:
+                        break
+                return html, text
 
-                    if show_overview:
-                        st.markdown("### 📋 Thread Overview")
-                        for idx, msg in enumerate(msgs[:10], 1):
-                            headers = {
-                                h["name"].lower(): h["value"]
-                                for h in msg.get("payload", {}).get("headers", [])
-                            }
-                            sender = headers.get("from", "Unknown sender")
-                            date = (
-                                headers.get("date", "")[:16]
-                                if headers.get("date")
-                                else "Unknown date"
-                            )
+            # Message navigation and display - ONE MESSAGE AT A TIME
+            if msgs:
+                total_messages = len(msgs[:10])
 
-                            payload = msg.get("payload", {})
-                            body_html, body_text = _extract_bodies(payload)
-                            preview = extract_email_preview(body_html, body_text)
+                # Thread overview toggle
+                show_overview = st.checkbox(
+                    "📋 Show thread overview",
+                    key=f"overview_{target_email}_{mbox}_{tid}",
+                    help="View clean previews of all messages in this thread",
+                )
 
-                            with st.container():
-                                st.markdown(f"**Message {idx}** • {sender} • {date}")
-                                if preview and preview != "No content available":
-                                    st.markdown(f"*{preview}*")
-                                else:
-                                    st.markdown("*No content preview available*")
-                                st.markdown("---")
-
-                        st.markdown(
-                            "**👇 Click below to browse messages individually**"
+                if show_overview:
+                    st.markdown("### 📋 Thread Overview")
+                    for idx, msg in enumerate(msgs[:10], 1):
+                        headers = {
+                            h["name"].lower(): h["value"]
+                            for h in msg.get("payload", {}).get("headers", [])
+                        }
+                        sender = headers.get("from", "Unknown sender")
+                        date = (
+                            headers.get("date", "")[:16]
+                            if headers.get("date")
+                            else "Unknown date"
                         )
 
-                    # Initialize session state for current message index
-                    msg_key = f"msg_idx_{mbox}_{tid}"
-                    if msg_key not in st.session_state:
-                        st.session_state[msg_key] = 0
-
-                    current_msg_idx = st.session_state[msg_key]
-
-                    # Message navigation controls
-                    st.markdown("### 📧 Conversation Navigator")
-
-                    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns(
-                        [1, 1, 2, 1, 1]
-                    )
-
-                    with nav_col1:
-                        if st.button(
-                            "⬅️ Previous",
-                            key=f"prev_{tid}",
-                            disabled=current_msg_idx <= 0,
-                        ):
-                            st.session_state[msg_key] = max(0, current_msg_idx - 1)
-                            st.rerun()
-
-                    with nav_col2:
-                        if st.button(
-                            "Next ➡️",
-                            key=f"next_{tid}",
-                            disabled=current_msg_idx >= total_messages - 1,
-                        ):
-                            st.session_state[msg_key] = min(
-                                total_messages - 1, current_msg_idx + 1
-                            )
-                            st.rerun()
-
-                    with nav_col3:
-                        st.markdown(
-                            f"**Message {current_msg_idx + 1} of {total_messages}**"
-                        )
-
-                    with nav_col4:
-                        if st.button(
-                            "⏮️ First", key=f"first_{tid}", disabled=current_msg_idx <= 0
-                        ):
-                            st.session_state[msg_key] = 0
-                            st.rerun()
-
-                    with nav_col5:
-                        if st.button(
-                            "⏭️ Last",
-                            key=f"last_{tid}",
-                            disabled=current_msg_idx >= total_messages - 1,
-                        ):
-                            st.session_state[msg_key] = total_messages - 1
-                            st.rerun()
-
-                    # Display ONLY the current message
-                    msg = msgs[current_msg_idx]
-                    i = current_msg_idx + 1
-                    headers = {
-                        h["name"].lower(): h["value"]
-                        for h in msg.get("payload", {}).get("headers", [])
-                    }
-                    subj = headers.get("subject", "(no subject)")
-                    frm = headers.get("from", "")
-                    to = headers.get("to", "")
-                    date = headers.get("date", "")
-
-                    # Create a clean container for the single message
-                    with st.container():
-                        st.markdown("---")  # Separator line
-
-                        # Message header info with conversation flow indicator
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.markdown(f"**📧 Message {i} of {total_messages}**")
-                            st.markdown(f"**Subject:** {subj}")
-                        with col2:
-                            st.markdown(f"**Date:** {date[:16] if date else 'N/A'}")
-
-                        # From/To info with better formatting
-                        from_col, to_col = st.columns([1, 1])
-                        with from_col:
-                            st.markdown(f"**From:** {frm}")
-                        with to_col:
-                            st.markdown(f"**To:** {to}")
-
-                        # Extract and display message body
-                        st.markdown("**Message Content:**")
                         payload = msg.get("payload", {})
                         body_html, body_text = _extract_bodies(payload)
+                        preview = extract_email_preview(body_html, body_text)
 
-                        # Raw HTML email rendering with proper dark mode support
-                        def render_raw_html_email(html_content, text_content):
-                            if html_content:
-                                import re
-
-                                # Basic sanitization - remove dangerous elements
-                                safe_html = re.sub(
-                                    r"<script[^>]*>.*?</script>",
-                                    "",
-                                    html_content,
-                                    flags=re.DOTALL | re.IGNORECASE,
-                                )
-                                safe_html = re.sub(
-                                    r"<iframe[^>]*>.*?</iframe>",
-                                    "",
-                                    safe_html,
-                                    flags=re.DOTALL | re.IGNORECASE,
-                                )
-                                safe_html = re.sub(
-                                    r"<object[^>]*>.*?</object>",
-                                    "",
-                                    safe_html,
-                                    flags=re.DOTALL | re.IGNORECASE,
-                                )
-                                safe_html = re.sub(
-                                    r"<embed[^>]*>", "", safe_html, flags=re.IGNORECASE
-                                )
-                                safe_html = re.sub(
-                                    r"<form[^>]*>.*?</form>",
-                                    "",
-                                    safe_html,
-                                    flags=re.DOTALL | re.IGNORECASE,
-                                )
-
-                                # Strip ALL existing color and background styling
-                                safe_html = re.sub(
-                                    r'style="[^"]*"', "", safe_html, flags=re.IGNORECASE
-                                )
-                                safe_html = re.sub(
-                                    r'color="[^"]*"', "", safe_html, flags=re.IGNORECASE
-                                )
-                                safe_html = re.sub(
-                                    r'bgcolor="[^"]*"',
-                                    "",
-                                    safe_html,
-                                    flags=re.IGNORECASE,
-                                )
-                                safe_html = re.sub(
-                                    r'background-color:\s*[^;"\s]+[;">\s]',
-                                    "",
-                                    safe_html,
-                                    flags=re.IGNORECASE,
-                                )
-                                safe_html = re.sub(
-                                    r'color:\s*[^;"\s]+[;">\s]',
-                                    "",
-                                    safe_html,
-                                    flags=re.IGNORECASE,
-                                )
-
-                                # Use Streamlit's font with italic styling like thread overview
-                                themed_html = f"""
-                                <style>
-                                * {{
-                                    color: #e0e0e0 !important;
-                                    background-color: transparent !important;
-                                    font-family: "Source Sans Pro", sans-serif !important;
-                                    line-height: 1.6 !important;
-                                    font-style: italic !important;
-                                }}
-                                body {{
-                                    font-size: 14px !important;
-                                }}
-                                a, a:visited, a:hover {{
-                                    color: #58a6ff !important;
-                                }}
-                                </style>
-                                {safe_html}
-                                """
-
-                                st.markdown("**📧 Email Content:**")
-                                components.html(themed_html, height=600, scrolling=True)
-
-                            elif text_content:
-                                st.markdown("**📝 Plain Text Content:**")
-                                st.text_area(
-                                    "",
-                                    value=text_content,
-                                    height=400,
-                                    label_visibility="collapsed",
-                                )
+                        with st.container():
+                            st.markdown(f"**Message {idx}** • {sender} • {date}")
+                            if preview and preview != "No content available":
+                                st.markdown(f"*{preview}*")
                             else:
-                                st.info("📭 No email content available")
+                                st.markdown("*No content preview available*")
+                            st.markdown("---")
 
-                        # Render the email content
-                        render_raw_html_email(body_html, body_text)
+                    st.markdown("**👇 Click below to browse messages individually**")
 
-                        # Show conversation context
-                        st.markdown("---")
-                        context_col1, context_col2, context_col3 = st.columns([1, 1, 1])
+                # Initialize session state for current message index
+                msg_key = f"msg_idx_{target_email}_{mbox}_{tid}"
+                if msg_key not in st.session_state:
+                    st.session_state[msg_key] = 0
 
-                        with context_col1:
-                            if current_msg_idx > 0:
-                                st.info(f"⬆️ Previous: Message {current_msg_idx}")
-                            else:
-                                st.info("📮 First message in thread")
+                current_msg_idx = st.session_state[msg_key]
 
-                        with context_col2:
-                            st.success(f"📍 Currently viewing: Message {i}")
+                # Message navigation controls
+                st.markdown("### 📧 Conversation Navigator")
 
-                        with context_col3:
-                            if current_msg_idx < total_messages - 1:
-                                st.info(f"⬇️ Next: Message {current_msg_idx + 2}")
-                            else:
-                                st.info("📭 Last message in thread")
+                nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns(
+                    [1, 1, 2, 1, 1]
+                )
 
-                else:
-                    st.warning("No messages found in this thread")
+                with nav_col1:
+                    if st.button(
+                        "⬅️ Previous",
+                        key=f"prev_{target_email}_{mbox}_{tid}",
+                        disabled=current_msg_idx <= 0,
+                    ):
+                        st.session_state[msg_key] = max(0, current_msg_idx - 1)
+                        st.rerun()
+
+                with nav_col2:
+                    if st.button(
+                        "Next ➡️",
+                        key=f"next_{target_email}_{mbox}_{tid}",
+                        disabled=current_msg_idx >= total_messages - 1,
+                    ):
+                        st.session_state[msg_key] = min(
+                            total_messages - 1, current_msg_idx + 1
+                        )
+                        st.rerun()
+
+                with nav_col3:
+                    st.markdown(
+                        f"**Message {current_msg_idx + 1} of {total_messages}**"
+                    )
+
+                with nav_col4:
+                    if st.button(
+                        "⏮️ First",
+                        key=f"first_{target_email}_{mbox}_{tid}",
+                        disabled=current_msg_idx <= 0,
+                    ):
+                        st.session_state[msg_key] = 0
+                        st.rerun()
+
+                with nav_col5:
+                    if st.button(
+                        "⏭️ Last",
+                        key=f"last_{target_email}_{mbox}_{tid}",
+                        disabled=current_msg_idx >= total_messages - 1,
+                    ):
+                        st.session_state[msg_key] = total_messages - 1
+                        st.rerun()
+
+                # Display ONLY the current message
+                msg = msgs[current_msg_idx]
+                i = current_msg_idx + 1
+                headers = {
+                    h["name"].lower(): h["value"]
+                    for h in msg.get("payload", {}).get("headers", [])
+                }
+                subj = headers.get("subject", "(no subject)")
+                frm = headers.get("from", "")
+                to = headers.get("to", "")
+                date = headers.get("date", "")
+
+                # Create a clean container for the single message
+                with st.container():
+                    st.markdown("---")
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.markdown(f"**📧 Message {i} of {total_messages}**")
+                        st.markdown(f"**Subject:** {subj}")
+                    with col2:
+                        st.markdown(f"**Date:** {date[:16] if date else 'N/A'}")
+
+                    from_col, to_col = st.columns([1, 1])
+                    with from_col:
+                        st.markdown(f"**From:** {frm}")
+                    with to_col:
+                        st.markdown(f"**To:** {to}")
+
+                    st.markdown("**Message Content:**")
+                    payload = msg.get("payload", {})
+                    body_html, body_text = _extract_bodies(payload)
+
+                    def render_raw_html_email(html_content, text_content):
+                        if html_content:
+                            import re
+
+                            safe_html = re.sub(
+                                r"<script[^>]*>.*?</script>",
+                                "",
+                                html_content,
+                                flags=re.DOTALL | re.IGNORECASE,
+                            )
+                            safe_html = re.sub(
+                                r"<iframe[^>]*>.*?</iframe>",
+                                "",
+                                safe_html,
+                                flags=re.DOTALL | re.IGNORECASE,
+                            )
+                            safe_html = re.sub(
+                                r"<object[^>]*>.*?</object>",
+                                "",
+                                safe_html,
+                                flags=re.DOTALL | re.IGNORECASE,
+                            )
+                            safe_html = re.sub(
+                                r"<embed[^>]*>", "", safe_html, flags=re.IGNORECASE
+                            )
+                            safe_html = re.sub(
+                                r"<form[^>]*>.*?</form>",
+                                "",
+                                safe_html,
+                                flags=re.DOTALL | re.IGNORECASE,
+                            )
+
+                            safe_html = re.sub(
+                                r'style="[^"]*"', "", safe_html, flags=re.IGNORECASE
+                            )
+                            safe_html = re.sub(
+                                r'color="[^"]*"', "", safe_html, flags=re.IGNORECASE
+                            )
+                            safe_html = re.sub(
+                                r'bgcolor="[^"]*"', "", safe_html, flags=re.IGNORECASE
+                            )
+                            safe_html = re.sub(
+                                r'background-color:\s*[^;"\s]+[;">\s]',
+                                "",
+                                safe_html,
+                                flags=re.IGNORECASE,
+                            )
+                            safe_html = re.sub(
+                                r'color:\s*[^;"\s]+[;">\s]',
+                                "",
+                                safe_html,
+                                flags=re.IGNORECASE,
+                            )
+
+                            themed_html = f"""
+                            <style>
+                            * {{
+                                color: #e0e0e0 !important;
+                                background-color: transparent !important;
+                                font-family: "Source Sans Pro", sans-serif !important;
+                                line-height: 1.6 !important;
+                                font-style: italic !important;
+                            }}
+                            body {{
+                                font-size: 14px !important;
+                            }}
+                            a, a:visited, a:hover {{
+                                color: #58a6ff !important;
+                            }}
+                            </style>
+                            {safe_html}
+                            """
+
+                            st.markdown("**📧 Email Content:**")
+                            components.html(themed_html, height=600, scrolling=True)
+
+                        elif text_content:
+                            st.markdown("**📝 Plain Text Content:**")
+                            st.text_area(
+                                "",
+                                value=text_content,
+                                height=400,
+                                label_visibility="collapsed",
+                            )
+                        else:
+                            st.info("📭 No email content available")
+
+                    render_raw_html_email(body_html, body_text)
+
+                    st.markdown("---")
+                    context_col1, context_col2, context_col3 = st.columns([1, 1, 1])
+
+                    with context_col1:
+                        if current_msg_idx > 0:
+                            st.info(f"⬆️ Previous: Message {current_msg_idx}")
+                        else:
+                            st.info("📮 First message in thread")
+
+                    with context_col2:
+                        st.success(f"📍 Currently viewing: Message {i}")
+
+                    with context_col3:
+                        if current_msg_idx < total_messages - 1:
+                            st.info(f"⬇️ Next: Message {current_msg_idx + 2}")
+                        else:
+                            st.info("📭 Last message in thread")
+
+            else:
+                st.warning("No messages found in this thread")
+
+
+# Organize UI: tabs by email, and within each, tabs by mailbox
+if len(emails_for_ui) > 1:
+    email_tabs = st.tabs(emails_for_ui)
+    for etab, addr in zip(email_tabs, emails_for_ui):
+        with etab:
+            st.caption(f"Searching for: {addr}")
+            tabs = st.tabs(mailboxes)
+            for tab, mbox in zip(tabs, mailboxes):
+                with tab:
+                    _render_mailbox_section(mbox, addr)
+else:
+    # Single email path retains mailbox tabs
+    tabs = st.tabs(mailboxes)
+    for tab, mbox in zip(tabs, mailboxes):
+        with tab:
+            _render_mailbox_section(mbox, emails_for_ui[0])
 
 # Navigation
 col1, col2 = st.columns([1, 5])

@@ -319,6 +319,24 @@ class GmailClient:
         used_fallback = False
         disable_query = os.environ.get("GMAIL_DISABLE_QUERY", "0") == "1"
 
+        # Normalize one or multiple comma/semicolon-separated emails
+        def _split_emails(raw: str) -> List[str]:
+            if not raw:
+                return []
+            parts = [p.strip() for p in raw.replace(";", ",").split(",")]
+            emails = [p.lower() for p in parts if p and "@" in p]
+            seen = set()
+            uniq: List[str] = []
+            for e in emails:
+                if e not in seen:
+                    seen.add(e)
+                    uniq.append(e)
+            return uniq
+
+        emails = _split_emails(contact_email)
+        if not emails:
+            return {"threads": [], "error": "invalid_email"}
+
         # First try: Use Gmail search with readonly scope for optimal performance
         readonly_scope_check = self._token_has_scope(
             mailbox, "https://www.googleapis.com/auth/gmail.readonly"
@@ -329,8 +347,11 @@ class GmailClient:
 
         if not disable_query and readonly_scope_check:
             try:
-                # Build more specific search query for better results
-                query_parts = [f"(to:{contact_email} OR from:{contact_email})"]
+                # Build search query that matches any of the provided emails
+                address_clause = " OR ".join(
+                    [f"(to:{addr} OR from:{addr})" for addr in emails]
+                )
+                query_parts = [f"({address_clause})"]
 
                 # Add date filter - Gmail prefers 'after:' and 'before:' over 'newer_than:'
                 if lookback_days > 0:
@@ -448,7 +469,7 @@ class GmailClient:
                         + ","
                         + hdr.get("bcc", "")
                     ).lower()
-                    if contact_email.lower() in hay:
+                    if any(addr in hay for addr in emails):
                         tid = j.get("threadId")
                         if tid and tid not in matched_set:
                             matched_set.add(tid)
@@ -526,7 +547,7 @@ class GmailClient:
                         + ","
                         + hdr.get("bcc", "")
                     ).lower()
-                    if contact_email.lower() in hay:
+                    if any(addr in hay for addr in emails):
                         tid = j.get("threadId")
                         if tid and tid not in seen:
                             seen.add(tid)
