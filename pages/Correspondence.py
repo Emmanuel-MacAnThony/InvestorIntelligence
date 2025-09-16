@@ -15,7 +15,7 @@ from gmail_client import GmailClient
 from utils_oauth import (
     get_oauth_config,
     is_valid_fernet_key,
-    EncryptedTokenStore,
+    get_token_store,
     get_token_scopes,
 )
 import base64
@@ -62,8 +62,7 @@ for tab, mbox in zip(tabs, mailboxes):
         st.subheader(mbox)
         # Show scopes for this mailbox to verify permissions
         try:
-            cfg_sc = get_oauth_config()
-            store_sc = EncryptedTokenStore(cfg_sc["token_dir"], cfg_sc["enc_key"])
+            store_sc = get_token_store()
             scopes = get_token_scopes(store_sc, mbox)
             if scopes:
                 st.caption("Scopes: " + ", ".join(sorted(scopes)))
@@ -84,26 +83,35 @@ for tab, mbox in zip(tabs, mailboxes):
                 st.progress(60, text="Fetching thread metadata")
         resp = client.list_threads(mbox, record["email"], lookback_days=lookback_days)
         ph.empty()
-        
+
         if resp.get("error") == "not_connected":
             # Check if this is due to expired/invalid refresh token
             try:
-                cfg_debug = get_oauth_config()
-                store_debug = EncryptedTokenStore(cfg_debug["token_dir"], cfg_debug["enc_key"])
+                store_debug = get_token_store()
                 token_debug = store_debug.load(mbox)
-                if token_debug and token_debug.get('refresh_token'):
+                if token_debug and token_debug.get("refresh_token"):
                     st.error(f"🔄 **Refresh token expired for {mbox}**")
-                    st.info("The saved authentication has expired and needs to be renewed. Go to **Mailboxes** page to re-connect this account.")
-                    
-                    if st.button(f"🗑️ Clear expired token for {mbox}", key=f"clear_token_{mbox}"):
+                    st.info(
+                        "The saved authentication has expired and needs to be renewed. Go to **Mailboxes** page to re-connect this account."
+                    )
+
+                    if st.button(
+                        f"🗑️ Clear expired token for {mbox}", key=f"clear_token_{mbox}"
+                    ):
                         # Delete the expired token so it shows as "not connected" properly
                         store_debug.delete(mbox)
-                        st.success(f"Cleared expired token for {mbox}. Please go to Mailboxes to reconnect.")
+                        st.success(
+                            f"Cleared expired token for {mbox}. Please go to Mailboxes to reconnect."
+                        )
                         st.rerun()
                 else:
-                    st.warning("Mailbox not connected. Go to Mailboxes to connect this account.")
+                    st.warning(
+                        "Mailbox not connected. Go to Mailboxes to connect this account."
+                    )
             except Exception as e:
-                st.warning("Mailbox not connected. Go to Mailboxes to connect this account.")
+                st.warning(
+                    "Mailbox not connected. Go to Mailboxes to connect this account."
+                )
             continue
         if resp.get("error") == "missing_readonly_scope":
             st.error(
@@ -129,7 +137,7 @@ for tab, mbox in zip(tabs, mailboxes):
             )
         elif resp.get("search_query"):
             st.success(f"✅ Used efficient Gmail search: {resp.get('search_query')}")
-        
+
         if not threads:
             st.info("No threads found for this contact in the selected timeframe.")
             continue
@@ -245,21 +253,62 @@ for tab, mbox in zip(tabs, mailboxes):
                         def render_email_content(html_content, text_content):
                             if html_content:
                                 import re
-                                
+
                                 # Basic sanitization - remove dangerous elements
-                                safe_html = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
-                                safe_html = re.sub(r"<iframe[^>]*>.*?</iframe>", "", safe_html, flags=re.DOTALL | re.IGNORECASE)
-                                safe_html = re.sub(r"<object[^>]*>.*?</object>", "", safe_html, flags=re.DOTALL | re.IGNORECASE)
-                                safe_html = re.sub(r"<embed[^>]*>", "", safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r"<form[^>]*>.*?</form>", "", safe_html, flags=re.DOTALL | re.IGNORECASE)
-                                
+                                safe_html = re.sub(
+                                    r"<script[^>]*>.*?</script>",
+                                    "",
+                                    html_content,
+                                    flags=re.DOTALL | re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r"<iframe[^>]*>.*?</iframe>",
+                                    "",
+                                    safe_html,
+                                    flags=re.DOTALL | re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r"<object[^>]*>.*?</object>",
+                                    "",
+                                    safe_html,
+                                    flags=re.DOTALL | re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r"<embed[^>]*>", "", safe_html, flags=re.IGNORECASE
+                                )
+                                safe_html = re.sub(
+                                    r"<form[^>]*>.*?</form>",
+                                    "",
+                                    safe_html,
+                                    flags=re.DOTALL | re.IGNORECASE,
+                                )
+
                                 # Strip ALL existing color and background styling
-                                safe_html = re.sub(r'style="[^"]*"', '', safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r'color="[^"]*"', '', safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r'bgcolor="[^"]*"', '', safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r'background-color:\s*[^;"\s]+[;">\s]', '', safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r'color:\s*[^;"\s]+[;">\s]', '', safe_html, flags=re.IGNORECASE)
-                                
+                                safe_html = re.sub(
+                                    r'style="[^"]*"', "", safe_html, flags=re.IGNORECASE
+                                )
+                                safe_html = re.sub(
+                                    r'color="[^"]*"', "", safe_html, flags=re.IGNORECASE
+                                )
+                                safe_html = re.sub(
+                                    r'bgcolor="[^"]*"',
+                                    "",
+                                    safe_html,
+                                    flags=re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r'background-color:\s*[^;"\s]+[;">\s]',
+                                    "",
+                                    safe_html,
+                                    flags=re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r'color:\s*[^;"\s]+[;">\s]',
+                                    "",
+                                    safe_html,
+                                    flags=re.IGNORECASE,
+                                )
+
                                 # Use Streamlit's font with italic styling like thread overview
                                 themed_html = f"""
                                 <style>
@@ -279,9 +328,9 @@ for tab, mbox in zip(tabs, mailboxes):
                                 </style>
                                 {safe_html}
                                 """
-                                
+
                                 components.html(themed_html, height=600, scrolling=True)
-                                
+
                             elif text_content:
                                 st.text_area(
                                     "",

@@ -11,7 +11,7 @@ _APP_DIR = os.path.abspath(os.path.join(_THIS_DIR, ".."))
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
-from utils_oauth import EncryptedTokenStore, get_oauth_config, is_valid_fernet_key
+from utils_oauth import get_oauth_config, is_valid_fernet_key, get_token_store
 
 st.set_page_config(page_title="Organization", layout="wide")
 
@@ -39,7 +39,7 @@ cfg_client = get_oauth_config()
 store = None
 if cfg_client.get("enc_key"):
     if is_valid_fernet_key(cfg_client["enc_key"]):
-        store = EncryptedTokenStore(cfg_client["token_dir"], cfg_client["enc_key"])
+        store = get_token_store()
     else:
         st.error(
             'Invalid OAUTH_TOKEN_ENC_KEY. Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'

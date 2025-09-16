@@ -14,11 +14,11 @@ if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
 from utils_oauth import (
-    EncryptedTokenStore,
     get_oauth_config,
     exchange_code_for_tokens,
     get_token_scopes,
     is_valid_fernet_key,
+    get_token_store,
 )
 
 # Load environment from project root .env files
@@ -75,7 +75,7 @@ def exchange_code_for_tokens(code: str, redirect_uri: str) -> dict:
     return resp.json()
 
 
-def status_row(addr: str, store: EncryptedTokenStore):
+def status_row(addr: str, store):
     col1, col2, col3, col4 = st.columns([4, 3, 3, 2])
     col1.write(addr)
     token = store.load(addr)
@@ -107,7 +107,9 @@ def status_row(addr: str, store: EncryptedTokenStore):
             auth_url = oauth_authorize_url(state=addr)
             st.info(f"Click the link below to authorize {addr}")
             st.markdown(f"[🔗 Continue to Google OAuth]({auth_url})")
-            st.caption("After authorization, you'll be redirected back here automatically.")
+            st.caption(
+                "After authorization, you'll be redirected back here automatically."
+            )
 
 
 hdr = st.columns([4, 3, 3, 2])
@@ -126,7 +128,7 @@ elif not is_valid_fernet_key(cfg["enc_key"]):
         'Invalid OAUTH_TOKEN_ENC_KEY. Generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
     )
 else:
-    store = EncryptedTokenStore(cfg["token_dir"], cfg["enc_key"])
+    store = get_token_store()
 
     # Handle OAuth callback with code
     code = None
@@ -197,5 +199,5 @@ else:
         status_row(m, store)
 
 st.caption(
-    "Tokens are stored encrypted on disk. In Testing mode, re-auth is needed weekly."
+    "Tokens are stored encrypted (disk or Airtable, depending on configuration). In Testing mode, re-auth is needed weekly."
 )

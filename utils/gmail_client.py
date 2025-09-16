@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from utils_oauth import EncryptedTokenStore, get_oauth_config
+from utils_oauth import get_oauth_config, get_token_store
 
 
 class GmailClient:
@@ -14,7 +14,7 @@ class GmailClient:
         cfg = get_oauth_config()
         self.client_id = cfg["client_id"]
         self.client_secret = cfg["client_secret"]
-        self.store = EncryptedTokenStore(cfg["token_dir"], cfg["enc_key"])
+        self.store = get_token_store()
 
         # Set up logging
         self.logger = logging.getLogger("gmail_client")
@@ -89,18 +89,20 @@ class GmailClient:
         access_token = self.get_access_token(mailbox)
         if not access_token:
             return {"error": "not_connected", "content": ""}
-        
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
         }
-        
+
         url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}"
-        
+
         try:
             # Get message in raw format (base64url encoded RFC 2822)
-            resp = requests.get(url, headers=headers, params={"format": "raw"}, timeout=15)
-            
+            resp = requests.get(
+                url, headers=headers, params={"format": "raw"}, timeout=15
+            )
+
             if resp.status_code == 401:
                 access_token = self._refresh_access_token(
                     mailbox, self.store.load(mailbox) or {}
@@ -108,62 +110,70 @@ class GmailClient:
                 if not access_token:
                     return {"error": "unauthorized", "content": ""}
                 headers["Authorization"] = f"Bearer {access_token}"
-                resp = requests.get(url, headers=headers, params={"format": "raw"}, timeout=15)
-            
+                resp = requests.get(
+                    url, headers=headers, params={"format": "raw"}, timeout=15
+                )
+
             if resp.status_code >= 400:
                 return {"error": f"API error {resp.status_code}", "content": ""}
-            
+
             message_data = resp.json()
             raw_message = message_data.get("raw", "")
-            
+
             if not raw_message:
                 return {"error": "No raw content", "content": ""}
-            
+
             # Decode base64url
             import base64
+
             try:
                 # Add padding if needed
                 missing_padding = len(raw_message) % 4
                 if missing_padding:
-                    raw_message += '=' * (4 - missing_padding)
-                
-                decoded_message = base64.urlsafe_b64decode(raw_message).decode('utf-8', errors='ignore')
-                
+                    raw_message += "=" * (4 - missing_padding)
+
+                decoded_message = base64.urlsafe_b64decode(raw_message).decode(
+                    "utf-8", errors="ignore"
+                )
+
                 # Extract just the message body (skip headers)
-                if '\n\n' in decoded_message:
-                    headers_part, body_part = decoded_message.split('\n\n', 1)
-                    
+                if "\n\n" in decoded_message:
+                    headers_part, body_part = decoded_message.split("\n\n", 1)
+
                     # Simple extraction - find the first text part
-                    lines = body_part.split('\n')
+                    lines = body_part.split("\n")
                     text_lines = []
                     in_text_part = False
-                    
+
                     for line in lines:
                         # Look for Content-Type: text/plain
-                        if 'Content-Type: text/plain' in line:
+                        if "Content-Type: text/plain" in line:
                             in_text_part = True
                             continue
-                        
+
                         # Skip MIME boundaries and headers
-                        if line.startswith('--') or line.startswith('Content-'):
+                        if line.startswith("--") or line.startswith("Content-"):
                             in_text_part = False
                             continue
-                        
+
                         # If we're in text part and line isn't empty/mime stuff
                         if in_text_part and line.strip():
                             text_lines.append(line)
-                    
+
                     if text_lines:
-                        return {"content": '\n'.join(text_lines).strip(), "format": "simple_text"}
+                        return {
+                            "content": "\n".join(text_lines).strip(),
+                            "format": "simple_text",
+                        }
                     else:
                         # Fallback - just return the body part
                         return {"content": body_part.strip(), "format": "raw_body"}
                 else:
                     return {"content": decoded_message.strip(), "format": "raw_full"}
-                    
+
             except Exception as e:
                 return {"error": f"Decode error: {e}", "content": ""}
-                
+
         except Exception as e:
             return {"error": str(e), "content": ""}
 

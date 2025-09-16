@@ -15,10 +15,14 @@ from gmail_client import GmailClient
 from utils_oauth import (
     get_oauth_config,
     is_valid_fernet_key,
-    EncryptedTokenStore,
+    get_token_store,
     get_token_scopes,
 )
-from utils.email_formatter import format_email_for_display, extract_email_preview, EmailContentProcessor
+from utils.email_formatter import (
+    format_email_for_display,
+    extract_email_preview,
+    EmailContentProcessor,
+)
 import base64
 from bs4 import BeautifulSoup
 import bleach
@@ -44,13 +48,15 @@ if email_from_url:
     # Email came from URL (Airtable button)
     search_email = email_from_url
     st.success(f"🔍 Searching for: **{search_email}**")
-    st.caption("Searching across all connected mailboxes for email threads with this contact")
+    st.caption(
+        "Searching across all connected mailboxes for email threads with this contact"
+    )
 else:
     # Manual email input
     search_email = st.text_input(
         "Enter email address to search for:",
         placeholder="john@company.com",
-        help="Enter the email address you want to search for across all your mailboxes"
+        help="Enter the email address you want to search for across all your mailboxes",
     )
 
 if not search_email:
@@ -88,14 +94,13 @@ for tab, mbox in zip(tabs, mailboxes):
         st.subheader(mbox)
         # Show scopes for this mailbox to verify permissions
         try:
-            cfg_sc = get_oauth_config()
-            store_sc = EncryptedTokenStore(cfg_sc["token_dir"], cfg_sc["enc_key"])
+            store_sc = get_token_store()
             scopes = get_token_scopes(store_sc, mbox)
             if scopes:
                 st.caption("Scopes: " + ", ".join(sorted(scopes)))
         except Exception:
             pass
-        
+
         # Loading skeleton while fetching threads
         ph = st.empty()
         with ph.container():
@@ -109,10 +114,12 @@ for tab, mbox in zip(tabs, mailboxes):
                 st.progress(35, text="Searching recent threads")
             with sk3.container():
                 st.progress(60, text="Fetching thread metadata")
-        
-        resp = client.list_threads(mbox, search_record["email"], lookback_days=lookback_days)
+
+        resp = client.list_threads(
+            mbox, search_record["email"], lookback_days=lookback_days
+        )
         ph.empty()
-        
+
         if resp.get("error") == "not_connected":
             st.warning(
                 "Mailbox not connected. Go to Mailboxes to connect this account."
@@ -131,7 +138,7 @@ for tab, mbox in zip(tabs, mailboxes):
         if resp.get("error"):
             st.error(f"Error: {resp['error']}")
             continue
-        
+
         threads = resp.get("threads", [])
         if resp.get("extendedWindow"):
             st.caption("Extended search window (up to 3 years) applied.")
@@ -143,11 +150,11 @@ for tab, mbox in zip(tabs, mailboxes):
             )
         elif resp.get("search_query"):
             st.success(f"✅ Used efficient Gmail search: {resp.get('search_query')}")
-        
+
         if not threads:
             st.info("No threads found for this contact in the selected timeframe.")
             continue
-        
+
         # Display basic thread info
         for th in threads[:10]:
             tid = th.get("id")
@@ -225,14 +232,14 @@ for tab, mbox in zip(tabs, mailboxes):
                 # Message navigation and display - ONE MESSAGE AT A TIME
                 if msgs:
                     total_messages = len(msgs[:10])
-                    
+
                     # Thread overview toggle
                     show_overview = st.checkbox(
-                        "📋 Show thread overview", 
+                        "📋 Show thread overview",
                         key=f"overview_{tid}",
-                        help="View clean previews of all messages in this thread"
+                        help="View clean previews of all messages in this thread",
                     )
-                    
+
                     if show_overview:
                         st.markdown("### 📋 Thread Overview")
                         for idx, msg in enumerate(msgs[:10], 1):
@@ -241,12 +248,16 @@ for tab, mbox in zip(tabs, mailboxes):
                                 for h in msg.get("payload", {}).get("headers", [])
                             }
                             sender = headers.get("from", "Unknown sender")
-                            date = headers.get("date", "")[:16] if headers.get("date") else "Unknown date"
-                            
+                            date = (
+                                headers.get("date", "")[:16]
+                                if headers.get("date")
+                                else "Unknown date"
+                            )
+
                             payload = msg.get("payload", {})
                             body_html, body_text = _extract_bodies(payload)
                             preview = extract_email_preview(body_html, body_text)
-                            
+
                             with st.container():
                                 st.markdown(f"**Message {idx}** • {sender} • {date}")
                                 if preview and preview != "No content available":
@@ -254,44 +265,66 @@ for tab, mbox in zip(tabs, mailboxes):
                                 else:
                                     st.markdown("*No content preview available*")
                                 st.markdown("---")
-                        
-                        st.markdown("**👇 Click below to browse messages individually**")
-                    
+
+                        st.markdown(
+                            "**👇 Click below to browse messages individually**"
+                        )
+
                     # Initialize session state for current message index
                     msg_key = f"msg_idx_{mbox}_{tid}"
                     if msg_key not in st.session_state:
                         st.session_state[msg_key] = 0
-                    
+
                     current_msg_idx = st.session_state[msg_key]
-                    
+
                     # Message navigation controls
                     st.markdown("### 📧 Conversation Navigator")
-                    
-                    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns([1, 1, 2, 1, 1])
-                    
+
+                    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns(
+                        [1, 1, 2, 1, 1]
+                    )
+
                     with nav_col1:
-                        if st.button("⬅️ Previous", key=f"prev_{tid}", disabled=current_msg_idx <= 0):
+                        if st.button(
+                            "⬅️ Previous",
+                            key=f"prev_{tid}",
+                            disabled=current_msg_idx <= 0,
+                        ):
                             st.session_state[msg_key] = max(0, current_msg_idx - 1)
                             st.rerun()
-                    
+
                     with nav_col2:
-                        if st.button("Next ➡️", key=f"next_{tid}", disabled=current_msg_idx >= total_messages - 1):
-                            st.session_state[msg_key] = min(total_messages - 1, current_msg_idx + 1)
+                        if st.button(
+                            "Next ➡️",
+                            key=f"next_{tid}",
+                            disabled=current_msg_idx >= total_messages - 1,
+                        ):
+                            st.session_state[msg_key] = min(
+                                total_messages - 1, current_msg_idx + 1
+                            )
                             st.rerun()
-                    
+
                     with nav_col3:
-                        st.markdown(f"**Message {current_msg_idx + 1} of {total_messages}**")
-                    
+                        st.markdown(
+                            f"**Message {current_msg_idx + 1} of {total_messages}**"
+                        )
+
                     with nav_col4:
-                        if st.button("⏮️ First", key=f"first_{tid}", disabled=current_msg_idx <= 0):
+                        if st.button(
+                            "⏮️ First", key=f"first_{tid}", disabled=current_msg_idx <= 0
+                        ):
                             st.session_state[msg_key] = 0
                             st.rerun()
-                    
+
                     with nav_col5:
-                        if st.button("⏭️ Last", key=f"last_{tid}", disabled=current_msg_idx >= total_messages - 1):
+                        if st.button(
+                            "⏭️ Last",
+                            key=f"last_{tid}",
+                            disabled=current_msg_idx >= total_messages - 1,
+                        ):
                             st.session_state[msg_key] = total_messages - 1
                             st.rerun()
-                    
+
                     # Display ONLY the current message
                     msg = msgs[current_msg_idx]
                     i = current_msg_idx + 1
@@ -332,21 +365,62 @@ for tab, mbox in zip(tabs, mailboxes):
                         def render_raw_html_email(html_content, text_content):
                             if html_content:
                                 import re
-                                
+
                                 # Basic sanitization - remove dangerous elements
-                                safe_html = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
-                                safe_html = re.sub(r"<iframe[^>]*>.*?</iframe>", "", safe_html, flags=re.DOTALL | re.IGNORECASE)
-                                safe_html = re.sub(r"<object[^>]*>.*?</object>", "", safe_html, flags=re.DOTALL | re.IGNORECASE)
-                                safe_html = re.sub(r"<embed[^>]*>", "", safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r"<form[^>]*>.*?</form>", "", safe_html, flags=re.DOTALL | re.IGNORECASE)
-                                
+                                safe_html = re.sub(
+                                    r"<script[^>]*>.*?</script>",
+                                    "",
+                                    html_content,
+                                    flags=re.DOTALL | re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r"<iframe[^>]*>.*?</iframe>",
+                                    "",
+                                    safe_html,
+                                    flags=re.DOTALL | re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r"<object[^>]*>.*?</object>",
+                                    "",
+                                    safe_html,
+                                    flags=re.DOTALL | re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r"<embed[^>]*>", "", safe_html, flags=re.IGNORECASE
+                                )
+                                safe_html = re.sub(
+                                    r"<form[^>]*>.*?</form>",
+                                    "",
+                                    safe_html,
+                                    flags=re.DOTALL | re.IGNORECASE,
+                                )
+
                                 # Strip ALL existing color and background styling
-                                safe_html = re.sub(r'style="[^"]*"', '', safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r'color="[^"]*"', '', safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r'bgcolor="[^"]*"', '', safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r'background-color:\s*[^;"\s]+[;">\s]', '', safe_html, flags=re.IGNORECASE)
-                                safe_html = re.sub(r'color:\s*[^;"\s]+[;">\s]', '', safe_html, flags=re.IGNORECASE)
-                                
+                                safe_html = re.sub(
+                                    r'style="[^"]*"', "", safe_html, flags=re.IGNORECASE
+                                )
+                                safe_html = re.sub(
+                                    r'color="[^"]*"', "", safe_html, flags=re.IGNORECASE
+                                )
+                                safe_html = re.sub(
+                                    r'bgcolor="[^"]*"',
+                                    "",
+                                    safe_html,
+                                    flags=re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r'background-color:\s*[^;"\s]+[;">\s]',
+                                    "",
+                                    safe_html,
+                                    flags=re.IGNORECASE,
+                                )
+                                safe_html = re.sub(
+                                    r'color:\s*[^;"\s]+[;">\s]',
+                                    "",
+                                    safe_html,
+                                    flags=re.IGNORECASE,
+                                )
+
                                 # Use Streamlit's font with italic styling like thread overview
                                 themed_html = f"""
                                 <style>
@@ -366,10 +440,10 @@ for tab, mbox in zip(tabs, mailboxes):
                                 </style>
                                 {safe_html}
                                 """
-                                
+
                                 st.markdown("**📧 Email Content:**")
                                 components.html(themed_html, height=600, scrolling=True)
-                                
+
                             elif text_content:
                                 st.markdown("**📝 Plain Text Content:**")
                                 st.text_area(
@@ -387,16 +461,16 @@ for tab, mbox in zip(tabs, mailboxes):
                         # Show conversation context
                         st.markdown("---")
                         context_col1, context_col2, context_col3 = st.columns([1, 1, 1])
-                        
+
                         with context_col1:
                             if current_msg_idx > 0:
                                 st.info(f"⬆️ Previous: Message {current_msg_idx}")
                             else:
                                 st.info("📮 First message in thread")
-                        
+
                         with context_col2:
                             st.success(f"📍 Currently viewing: Message {i}")
-                        
+
                         with context_col3:
                             if current_msg_idx < total_messages - 1:
                                 st.info(f"⬇️ Next: Message {current_msg_idx + 2}")
@@ -418,11 +492,13 @@ if search_email:
     st.sidebar.write(f"**Email:** {search_email}")
     st.sidebar.write(f"**Mailboxes:** {len(mailboxes)}")
     st.sidebar.write(f"**Lookback:** {lookback_days} days")
-    
+
     # Option to search for a different email
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Search Different Email")
-    new_email = st.sidebar.text_input("New email to search:", placeholder="john@company.com")
+    new_email = st.sidebar.text_input(
+        "New email to search:", placeholder="john@company.com"
+    )
     if st.sidebar.button("🔍 Search") and new_email:
         st.query_params.update({"email": new_email})
         st.rerun()
