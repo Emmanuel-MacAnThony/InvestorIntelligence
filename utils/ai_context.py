@@ -44,8 +44,7 @@ class AIContextEngine:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable not found")
-        
-        print(f"[DEBUG] Initializing OpenAI client with key: {api_key[:10]}...")
+
         self.client = openai.OpenAI(api_key=api_key)
         
     def analyze_thread(self, messages: List[EmailMessage], company_context: Optional[str] = None) -> ThreadAnalysis:
@@ -91,9 +90,6 @@ class AIContextEngine:
         }}"""
         
         try:
-            print(f"[DEBUG] Sending request to OpenAI...")
-            print(f"[DEBUG] Thread text length: {len(thread_text)} characters")
-            
             # Try GPT-4o-mini first (less restrictive filtering)
             try:
                 response = self.client.chat.completions.create(
@@ -106,7 +102,6 @@ class AIContextEngine:
                     max_tokens=1500
                 )
             except Exception as gpt4_error:
-                print(f"[DEBUG] GPT-4o-mini failed, trying GPT-3.5-turbo: {gpt4_error}")
                 # Fallback to original model
                 response = self.client.chat.completions.create(
                     model="gpt-3.5-turbo-16k",  # Fallback model
@@ -117,35 +112,22 @@ class AIContextEngine:
                     temperature=0.3,
                     max_tokens=1500  # Reduced to leave room for input
                 )
-            
-            print(f"[DEBUG] Response received from OpenAI")
-            print(f"[DEBUG] Response object: {response}")
-            print(f"[DEBUG] Response choices: {response.choices}")
-            
+
             # Get response content
             if not response.choices:
-                print("[ERROR] No choices in OpenAI response")
                 raise ValueError("No choices in OpenAI response")
-            
+
             choice = response.choices[0]
             message = choice.message
-            print(f"[DEBUG] Message object: {message}")
-            print(f"[DEBUG] Finish reason: {choice.finish_reason}")
-            
+
             # Check for content filter
             if choice.finish_reason == 'content_filter':
-                print("[ERROR] Content was filtered by OpenAI safety system")
-                print("[INFO] Providing fallback analysis based on thread metadata")
                 return self._create_fallback_analysis(messages)
-            
+
             response_content = message.content
             if response_content:
                 response_content = response_content.strip()
-                print(f"[DEBUG] AI Response length: {len(response_content)}")
-                print(f"[DEBUG] AI Response: {response_content}")
             else:
-                print("[ERROR] Empty response content from OpenAI")
-                print(f"[DEBUG] Raw message content: '{message.content}'")
                 raise ValueError("Empty response from OpenAI API")
             
             # Try to extract JSON if response contains extra text
@@ -182,11 +164,6 @@ class AIContextEngine:
             )
             
         except json.JSONDecodeError as e:
-            print(f"[ERROR] JSON parsing failed: {str(e)}")
-            try:
-                print(f"[ERROR] Response content: {response_content}")
-            except NameError:
-                print("[ERROR] Response content not available")
             # Return default analysis if JSON parsing fails
             return ThreadAnalysis(
                 conversation_stage="unknown",
@@ -202,7 +179,6 @@ class AIContextEngine:
                 summary=f"JSON parsing failed: {str(e)}"
             )
         except Exception as e:
-            print(f"[ERROR] AI analysis failed: {str(e)}")
             # Return default analysis if AI fails
             return ThreadAnalysis(
                 conversation_stage="unknown",

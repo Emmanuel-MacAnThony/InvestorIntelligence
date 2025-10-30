@@ -46,12 +46,10 @@ class ReportGenerator:
             # Write report to file
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(report_content)
-            
-            print(f"Analysis report generated: {filepath}")
+
             return filepath
-            
+
         except Exception as e:
-            print(f"Error generating analysis report: {e}")
             return ""
     
     def _build_text_report(self, analysis_data: Dict[str, Any], 

@@ -79,9 +79,14 @@ class GmailClient:
     def get_access_token(self, mailbox: str) -> Optional[str]:
         token = self.store.load(mailbox)
         if not token:
+            self.logger.warning(f"No token found for mailbox: {mailbox}")
             return None
         if self._is_token_expired(token):
-            return self._refresh_access_token(mailbox, token)
+            self.logger.info(f"Token expired for mailbox: {mailbox}, attempting refresh")
+            refreshed_token = self._refresh_access_token(mailbox, token)
+            if not refreshed_token:
+                self.logger.error(f"Token refresh failed for mailbox: {mailbox}")
+            return refreshed_token
         return token.get("access_token")
 
     def get_simple_message_text(self, mailbox: str, message_id: str) -> Dict[str, Any]:
@@ -305,7 +310,7 @@ class GmailClient:
     ) -> Dict[str, Any]:
         access_token = self.get_access_token(mailbox)
         if not access_token:
-            return {"threads": [], "error": "not_connected"}
+            return {"threads": [], "error": "gmail_authentication_failed", "details": "No valid OAuth token. Please re-authenticate."}
         after_date = (datetime.utcnow() - timedelta(days=lookback_days)).strftime(
             "%Y/%m/%d"
         )
@@ -572,7 +577,7 @@ class GmailClient:
     def get_thread(self, mailbox: str, thread_id: str) -> Dict[str, Any]:
         access_token = self.get_access_token(mailbox)
         if not access_token:
-            return {"error": "not_connected"}
+            return {"error": "gmail_authentication_failed", "details": "No valid OAuth token. Please re-authenticate."}
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
@@ -671,3 +676,93 @@ class GmailClient:
             self.logger.error(f"Error upgrading thread messages: {e}")
             thread["has_full_messages"] = False
         return thread
+
+    def search_emails(self, mailbox: str, query: str, max_results: int = 100) -> Dict[str, Any]:
+        """
+        Search for emails using Gmail's search query syntax.
+        
+        Args:
+            mailbox: Email address to search in
+            query: Gmail search query (e.g., "from:someone@example.com after:2023/01/01")
+            max_results: Maximum number of messages to return
+            
+        Returns:
+            Dictionary with 'messages' list and optional 'error' key
+        """
+        access_token = self.get_access_token(mailbox)
+        if not access_token:
+            self.logger.error(f"Gmail search failed: No valid access token for {mailbox}")
+            return {"messages": [], "error": "gmail_authentication_failed", "details": f"No valid OAuth token found for {mailbox}. Please re-authenticate."}
+            
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        
+        url = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+        
+        params = {
+            "q": query,
+            "maxResults": min(max_results, 500)  # Gmail API limit
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                messages = data.get("messages", [])
+                
+                # Return message list compatible with existing code
+                return {
+                    "messages": messages,
+                    "resultSizeEstimate": data.get("resultSizeEstimate", len(messages))
+                }
+            else:
+                self.logger.error(f"Gmail search failed: {response.status_code} - {response.text}")
+                return {
+                    "messages": [],
+                    "error": f"Gmail API error: {response.status_code}"
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Error searching emails: {str(e)}")
+            return {
+                "messages": [],
+                "error": f"Search failed: {str(e)}"
+            }
+
+    def get_message(self, mailbox: str, message_id: str) -> Dict[str, Any]:
+        """
+        Get a single message by ID.
+        
+        Args:
+            mailbox: Email address
+            message_id: Gmail message ID
+            
+        Returns:
+            Message data dictionary
+        """
+        access_token = self.get_access_token(mailbox)
+        if not access_token:
+            return {"error": "gmail_authentication_failed", "details": "No valid OAuth token. Please re-authenticate."}
+            
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+        
+        url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}"
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self.logger.error(f"Get message failed: {response.status_code} - {response.text}")
+                return {"error": f"Gmail API error: {response.status_code}"}
+                
+        except Exception as e:
+            self.logger.error(f"Error getting message: {str(e)}")
+            return {"error": f"Get message failed: {str(e)}"}
