@@ -466,6 +466,41 @@ def _render_mailbox_section(mbox: str, target_email: str):
                             st.info(f"⬇️ Next: Message {current_msg_idx + 2}")
                         else:
                             st.info("📭 Last message in thread")
+                    
+                    # AI Analysis Section
+                    st.markdown("---")
+                    st.markdown("### 🤖 AI Analysis")
+                    
+                    analysis_col1, analysis_col2 = st.columns([2, 1])
+                    
+                    with analysis_col1:
+                        st.markdown("**Fundraising Intelligence:** Get AI-powered analysis of this conversation with actionable next steps and email strategies.")
+                    
+                    with analysis_col2:
+                        if st.button(
+                            "🚀 Analyze Thread", 
+                            key=f"analyze_{target_email}_{mbox}_{tid}",
+                            type="primary",
+                            use_container_width=True,
+                            help="Launch AI analysis for fundraising insights and strategy recommendations"
+                        ):
+                            # Store thread data for analysis
+                            thread_analysis_data = {
+                                "thread_id": tid,
+                                "mailbox": mbox,
+                                "target_email": target_email,
+                                "subject": subj,
+                                "sender": frm,
+                                "recipient": to,
+                                "total_messages": total_messages,
+                                "current_message_index": current_msg_idx
+                            }
+                            
+                            st.session_state["selected_thread"] = thread_analysis_data
+                            st.session_state["user_email"] = mbox  # Set the user email for analysis
+                            
+                            # Navigate to thread analysis page
+                            st.switch_page("pages/ThreadAnalysis.py")
 
             else:
                 st.warning("No messages found in this thread")
