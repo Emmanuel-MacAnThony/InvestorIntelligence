@@ -561,11 +561,187 @@ if st.session_state.get("generate_monthly_report", False):
                 # Display full report
                 st.markdown("## 📄 Detailed Report")
 
+                # Check if markdown library is available for HTML export
+                try:
+                    from markdown2 import markdown
+                    html_export_available = True
+                except ImportError:
+                    html_export_available = False
+
                 # Add tabs for different sections
                 tab1, tab2, tab3 = st.tabs(["📊 Full Report", "🎯 Action Items", "📈 Raw Data"])
 
                 with tab1:
                     st.markdown(report_markdown)
+
+                    # Quick action buttons at the top of the report
+                    st.markdown("---")
+                    st.markdown("#### 💾 Export Options")
+                    st.caption("Copy text, download as TXT, or download as styled HTML (open in browser and use 'Print to PDF')")
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        # Copy to clipboard - using text_area for easy copying
+                        with st.expander("📋 Copy Report Text"):
+                            st.text_area(
+                                "Select all and copy (Ctrl+A, Ctrl+C):",
+                                value=report_markdown,
+                                height=200,
+                                key="copy_textarea",
+                                label_visibility="collapsed"
+                            )
+
+                    with col2:
+                        # Download as text
+                        st.download_button(
+                            label="📄 Download as TXT",
+                            data=report_markdown,
+                            file_name=f"pipeline_report_{datetime.now().strftime('%Y%m%d')}.txt",
+                            mime="text/plain",
+                            use_container_width=True,
+                            key="download_txt_btn"
+                        )
+
+                    with col3:
+                        # Download as HTML (can be printed to PDF from browser)
+                        if html_export_available:
+                            try:
+                                # Convert markdown to styled HTML
+                                html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Pipeline Intelligence Report - {datetime.now().strftime('%Y-%m-%d')}</title>
+    <style>
+        @media print {{
+            body {{ margin: 0; }}
+            @page {{ margin: 1.5cm; }}
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            color: #333;
+            background: #fff;
+        }}
+        h1 {{
+            color: #1a73e8;
+            border-bottom: 3px solid #1a73e8;
+            padding-bottom: 12px;
+            margin-top: 0;
+            font-size: 2.2em;
+        }}
+        h2 {{
+            color: #2c3e50;
+            margin-top: 35px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 8px;
+            font-size: 1.6em;
+        }}
+        h3 {{
+            color: #555;
+            margin-top: 25px;
+            font-size: 1.3em;
+        }}
+        ul {{
+            margin-left: 25px;
+            margin-top: 10px;
+        }}
+        li {{
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }}
+        hr {{
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 30px 0;
+        }}
+        strong {{
+            color: #2c3e50;
+        }}
+        .print-button {{
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            background: #1a73e8;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }}
+        .print-button:hover {{
+            background: #1557b0;
+        }}
+        @media print {{
+            .print-button {{ display: none; }}
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <button class="print-button" onclick="window.print()">🖨️ Print to PDF</button>
+    {markdown(report_markdown)}
+    <script>
+        // Auto-focus for keyboard shortcut Ctrl+P
+        document.addEventListener('keydown', function(e) {{
+            if (e.ctrlKey && e.key === 'p') {{
+                e.preventDefault();
+                window.print();
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+                                st.download_button(
+                                    label="📄 Download HTML → PDF",
+                                    data=html_content,
+                                    file_name=f"pipeline_report_{datetime.now().strftime('%Y%m%d')}.html",
+                                    mime="text/html",
+                                    use_container_width=True,
+                                    key="download_html_btn",
+                                    help="Download HTML file, open in browser, click 'Print to PDF' button"
+                                )
+                            except Exception as e:
+                                st.error(f"HTML generation failed: {str(e)}")
+                        else:
+                            # Fallback: plain HTML without markdown conversion
+                            html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Pipeline Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }}
+        pre {{ white-space: pre-wrap; }}
+    </style>
+</head>
+<body>
+    <button onclick="window.print()" style="position: fixed; top: 20px; right: 20px;">🖨️ Print to PDF</button>
+    <pre>{report_markdown}</pre>
+</body>
+</html>"""
+
+                            st.download_button(
+                                label="📄 Download HTML → PDF",
+                                data=html_content,
+                                file_name=f"pipeline_report_{datetime.now().strftime('%Y%m%d')}.html",
+                                mime="text/html",
+                                use_container_width=True,
+                                key="download_html_plain_btn",
+                                help="Download HTML file, open in browser, click 'Print to PDF' button"
+                            )
 
                 with tab2:
                     # Extract action items
