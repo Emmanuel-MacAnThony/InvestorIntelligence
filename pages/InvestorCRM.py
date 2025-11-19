@@ -74,12 +74,14 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Monthly Intelligence Report Section
-    st.markdown("### 📊 Intelligence Reports")
+    # Retrospective Intelligence Report Section
+    st.markdown("### 📊 Pipeline Reports")
 
-    if st.button("📈 Generate Monthly Report", use_container_width=True, type="primary"):
+    if st.button("📈 Retrospective Report", use_container_width=True, type="primary", key="sidebar_report_btn"):
         st.session_state["generate_monthly_report"] = True
         st.rerun()
+
+    st.caption("Analyzes all investors with AI insights")
 
     st.markdown("---")
 
@@ -132,6 +134,21 @@ if investors:
         st.progress(warm_pct / 100, text=f"⚡ Warm: {warm_pct:.0f}%")
         st.progress(cold_pct / 100, text=f"❄️ Cold: {cold_pct:.0f}%")
 
+    st.markdown("---")
+
+    # Prominent Report Generation Button
+    st.markdown("### 📊 Pipeline Intelligence Report")
+    st.markdown("Generate a comprehensive retrospective report analyzing all investors you're tracking")
+
+    col1, col2, col3 = st.columns([2, 2, 1])
+    with col1:
+        if st.button("📈 Generate Retrospective Report", type="primary", use_container_width=True, key="main_report_btn"):
+            st.session_state["generate_monthly_report"] = True
+            st.rerun()
+
+    with col2:
+        st.caption("Analyzes all tracked investors with AI-powered insights, specific recommendations by investor name, and actionable priorities")
+
 st.markdown("---")
 
 # Quick Action Views
@@ -180,7 +197,10 @@ if view_mode == "Needs Attention":
 
                 with col2:
                     if st.button("📧 Draft Follow-up", key=f"draft_{record['id']}"):
-                        st.info("Email drafting feature coming soon!")
+                        st.session_state["selected_investor"] = record
+                        st.session_state["compose_email_for"] = email
+                        st.session_state["show_email_composer"] = True
+                        st.switch_page("pages/InvestorProfile.py")
 
                     if st.button("📊 View Full Profile", key=f"profile_{record['id']}"):
                         st.session_state["selected_investor"] = record
@@ -220,7 +240,10 @@ elif view_mode == "Hot Leads":
 
                 with col3:
                     if st.button("📧 Reply Now", key=f"reply_{record['id']}", type="primary"):
-                        st.info("Email composition coming soon!")
+                        st.session_state["selected_investor"] = record
+                        st.session_state["compose_email_for"] = email
+                        st.session_state["show_email_composer"] = True
+                        st.switch_page("pages/InvestorProfile.py")
 
                     if st.button("📊 View Profile", key=f"view_{record['id']}"):
                         st.session_state["selected_investor"] = record

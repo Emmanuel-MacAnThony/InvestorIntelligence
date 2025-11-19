@@ -735,34 +735,245 @@ class GmailClient:
     def get_message(self, mailbox: str, message_id: str) -> Dict[str, Any]:
         """
         Get a single message by ID.
-        
+
         Args:
             mailbox: Email address
             message_id: Gmail message ID
-            
+
         Returns:
             Message data dictionary
         """
         access_token = self.get_access_token(mailbox)
         if not access_token:
             return {"error": "gmail_authentication_failed", "details": "No valid OAuth token. Please re-authenticate."}
-            
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
         }
-        
+
         url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}"
-        
+
         try:
             response = requests.get(url, headers=headers, timeout=30)
-            
+
             if response.status_code == 200:
                 return response.json()
             else:
                 self.logger.error(f"Get message failed: {response.status_code} - {response.text}")
                 return {"error": f"Gmail API error: {response.status_code}"}
-                
+
         except Exception as e:
             self.logger.error(f"Error getting message: {str(e)}")
             return {"error": f"Get message failed: {str(e)}"}
+
+    def send_email(
+        self,
+        mailbox: str,
+        to: str,
+        subject: str,
+        body_html: str,
+        body_plain: Optional[str] = None,
+        cc: Optional[str] = None,
+        bcc: Optional[str] = None,
+        in_reply_to: Optional[str] = None,
+        references: Optional[str] = None,
+        thread_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Send an email via Gmail API.
+
+        Args:
+            mailbox: Sender email address (must be authenticated)
+            to: Recipient email address(es), comma-separated
+            subject: Email subject line
+            body_html: HTML email body
+            body_plain: Plain text email body (optional, auto-generated from HTML if not provided)
+            cc: CC recipients, comma-separated (optional)
+            bcc: BCC recipients, comma-separated (optional)
+            in_reply_to: Message-ID of the message this is replying to (for threading)
+            references: Message-ID references for threading
+            thread_id: Gmail thread ID to add this message to
+
+        Returns:
+            Dict with 'id', 'threadId', 'labelIds' on success, or 'error' on failure
+        """
+        access_token = self.get_access_token(mailbox)
+        if not access_token:
+            return {"error": "gmail_authentication_failed", "details": "No valid OAuth token. Please re-authenticate."}
+
+        try:
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+            import base64
+
+            # Create message container
+            message = MIMEMultipart('alternative')
+            message['From'] = mailbox
+            message['To'] = to
+            message['Subject'] = subject
+
+            if cc:
+                message['Cc'] = cc
+            if bcc:
+                message['Bcc'] = bcc
+
+            # Add threading headers if replying
+            if in_reply_to:
+                message['In-Reply-To'] = in_reply_to
+            if references:
+                message['References'] = references
+
+            # Create plain text version if not provided
+            if not body_plain:
+                # Simple HTML to text conversion
+                import re
+                body_plain = re.sub('<[^<]+?>', '', body_html)
+                body_plain = body_plain.replace('&nbsp;', ' ').strip()
+
+            # Attach parts
+            part1 = MIMEText(body_plain, 'plain')
+            part2 = MIMEText(body_html, 'html')
+            message.attach(part1)
+            message.attach(part2)
+
+            # Encode message
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+
+            # Prepare request payload
+            payload = {'raw': raw_message}
+            if thread_id:
+                payload['threadId'] = thread_id
+
+            # Send via Gmail API
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            }
+
+            url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+
+            if response.status_code == 200:
+                result = response.json()
+                self.logger.info(f"Email sent successfully: {result.get('id')}")
+                return {
+                    "success": True,
+                    "id": result.get("id"),
+                    "threadId": result.get("threadId"),
+                    "labelIds": result.get("labelIds", [])
+                }
+            else:
+                self.logger.error(f"Send email failed: {response.status_code} - {response.text}")
+                return {
+                    "error": f"Gmail API error: {response.status_code}",
+                    "details": response.text
+                }
+
+        except Exception as e:
+            self.logger.error(f"Error sending email: {str(e)}")
+            import traceback
+            return {
+                "error": f"Send failed: {str(e)}",
+                "traceback": traceback.format_exc()
+            }
+
+    def create_draft(
+        self,
+        mailbox: str,
+        to: str,
+        subject: str,
+        body_html: str,
+        body_plain: Optional[str] = None,
+        cc: Optional[str] = None,
+        bcc: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a draft email in Gmail.
+
+        Args:
+            mailbox: Email address
+            to: Recipient email address(es)
+            subject: Email subject
+            body_html: HTML email body
+            body_plain: Plain text body (optional)
+            cc: CC recipients (optional)
+            bcc: BCC recipients (optional)
+
+        Returns:
+            Dict with draft 'id' and 'message' on success, or 'error' on failure
+        """
+        access_token = self.get_access_token(mailbox)
+        if not access_token:
+            return {"error": "gmail_authentication_failed", "details": "No valid OAuth token. Please re-authenticate."}
+
+        try:
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+            import base64
+
+            # Create message
+            message = MIMEMultipart('alternative')
+            message['From'] = mailbox
+            message['To'] = to
+            message['Subject'] = subject
+
+            if cc:
+                message['Cc'] = cc
+            if bcc:
+                message['Bcc'] = bcc
+
+            # Create plain text if not provided
+            if not body_plain:
+                import re
+                body_plain = re.sub('<[^<]+?>', '', body_html)
+                body_plain = body_plain.replace('&nbsp;', ' ').strip()
+
+            # Attach parts
+            part1 = MIMEText(body_plain, 'plain')
+            part2 = MIMEText(body_html, 'html')
+            message.attach(part1)
+            message.attach(part2)
+
+            # Encode message
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+
+            # Create draft payload
+            draft_payload = {
+                'message': {
+                    'raw': raw_message
+                }
+            }
+
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            }
+
+            url = "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
+
+            response = requests.post(url, headers=headers, json=draft_payload, timeout=30)
+
+            if response.status_code == 200:
+                result = response.json()
+                self.logger.info(f"Draft created successfully: {result.get('id')}")
+                return {
+                    "success": True,
+                    "id": result.get("id"),
+                    "message": result.get("message", {})
+                }
+            else:
+                self.logger.error(f"Create draft failed: {response.status_code} - {response.text}")
+                return {
+                    "error": f"Gmail API error: {response.status_code}",
+                    "details": response.text
+                }
+
+        except Exception as e:
+            self.logger.error(f"Error creating draft: {str(e)}")
+            import traceback
+            return {
+                "error": f"Draft creation failed: {str(e)}",
+                "traceback": traceback.format_exc()
+            }

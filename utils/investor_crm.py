@@ -495,7 +495,7 @@ class InvestorCRM:
             'concerns': '\n'.join(analysis.concerns_raised) if analysis and analysis.concerns_raised else '',
             'conversation_summary': analysis.summary if analysis else '',
             'next_action': '\n'.join(analysis.next_actions) if analysis and analysis.next_actions else '',
-            'thread_ids': f"['{thread_data.get('thread_id', '')}']",
+            'thread_ids': thread_data.get('thread_id', ''),  # Store as plain string, not list format
             'status': 'Active',
             'trending': 'Stable'
         }
@@ -539,6 +539,25 @@ class InvestorCRM:
             except:
                 last_contact = None
 
+        # Handle thread IDs - append new ones to existing
+        new_thread_id = thread_data.get('thread_id', '')
+        existing_thread_ids = existing_fields.get('thread_ids', '')
+
+        # Parse existing thread IDs
+        if existing_thread_ids:
+            # Clean up any bracket/quote formatting
+            cleaned = existing_thread_ids.replace("[", "").replace("]", "").replace("'", "").replace('"', '')
+            existing_ids = [tid.strip() for tid in cleaned.split(",") if tid.strip()]
+        else:
+            existing_ids = []
+
+        # Add new thread ID if not already present
+        if new_thread_id and new_thread_id not in existing_ids:
+            existing_ids.append(new_thread_id)
+
+        # Store as comma-separated string
+        updated_thread_ids = ','.join(existing_ids)
+
         # Update data
         update = {
             'stage': self._map_stage(analysis.conversation_stage) if analysis else existing_fields.get('stage'),
@@ -550,6 +569,7 @@ class InvestorCRM:
             'concerns': '\n'.join(analysis.concerns_raised) if analysis and analysis.concerns_raised else existing_fields.get('concerns', ''),
             'conversation_summary': analysis.summary if analysis else existing_fields.get('conversation_summary', ''),
             'next_action': '\n'.join(analysis.next_actions) if analysis and analysis.next_actions else existing_fields.get('next_action', ''),
+            'thread_ids': updated_thread_ids,  # Add updated thread IDs
         }
 
         # Add last_contact_date only if valid
@@ -854,7 +874,8 @@ class InvestorCRM:
                 })
 
             prompt = f"""
-            You are a fundraising strategist analyzing a startup's investor pipeline. Generate actionable intelligence.
+            CRITICAL: Generate a HIGHLY SPECIFIC, CONTEXT-AWARE pipeline intelligence report using ACTUAL investor data.
+            DO NOT provide generic fundraising advice - reference SPECIFIC investors by name and their actual situations.
 
             Company Context: {company_context}
 
@@ -871,37 +892,55 @@ class InvestorCRM:
             STAGE BREAKDOWN:
             {json.dumps(metrics['stage_breakdown'], indent=2)}
 
-            SENTIMENT:
+            SENTIMENT DISTRIBUTION:
             - Positive: {metrics['positive_sentiment_count']}
             - Neutral: {metrics['neutral_sentiment_count']}
             - Negative: {metrics['negative_sentiment_count']}
 
-            TOP INVESTOR PROFILES (sample):
+            ACTUAL INVESTOR DATA (reference these specific investors in your analysis):
             {json.dumps(investor_summaries[:20], indent=2)}
 
-            Generate a comprehensive analysis in JSON format:
+            INSTRUCTIONS:
+            1. Reference SPECIFIC investors by NAME when discussing patterns
+            2. Use ACTUAL health scores, stages, and trends from the data above
+            3. Identify patterns based on THIS data, not generic assumptions
+            4. Provide actionable recommendations for SPECIFIC investors
+            5. When mentioning concerns, reference which specific investors have those concerns
+
+            Generate comprehensive analysis in JSON format:
             {{
-                "executive_summary": "2-3 sentence overview of pipeline health",
-                "key_wins": ["win1", "win2", "win3"],
-                "areas_of_concern": ["concern1", "concern2", "concern3"],
-                "pipeline_bottlenecks": ["where deals are stalling and why"],
-                "success_patterns": ["what's working in successful conversations"],
-                "failure_patterns": ["what's not working in unsuccessful conversations"],
+                "executive_summary": "2-3 sentence overview using actual metrics and naming 2-3 specific investors by name",
+                "key_wins": ["Specific investor name at Firm showing positive trend because...", "Another named investor engaged because..."],
+                "areas_of_concern": ["Specific investor name - reason based on their actual data", "Named investor - specific issue from their profile"],
+                "pipeline_bottlenecks": ["Stage X has Y investors stuck - name 2-3 examples and their specific situation"],
+                "success_patterns": ["What specific named investors did that worked", "Actual interest patterns from the data"],
+                "failure_patterns": ["Which named investors aren't responding and why (based on their data)", "Specific patterns in cold leads"],
                 "top_10_priorities": [
-                    {{"investor": "name", "action": "specific action", "timing": "when", "rationale": "why now"}},
+                    {{"investor": "ACTUAL investor name from list", "action": "specific action based on their stage/interests/concerns", "timing": "when based on last contact", "rationale": "why now based on their actual data"}},
                     ...
                 ],
                 "strategic_recommendations": [
-                    {{"recommendation": "what to do", "expected_impact": "what will improve", "priority": "high/medium/low"}},
+                    {{"recommendation": "specific action for named investor(s)", "expected_impact": "what metric will improve", "priority": "high/medium/low"}},
                     ...
                 ],
-                "risk_mitigation": ["specific actions to address at-risk relationships"],
+                "risk_mitigation": ["Specific named investor needs X by date Y because..."],
                 "next_30_days_plan": [
-                    {{"action": "what", "who": "which investors", "when": "timing", "success_metric": "how to measure"}}
+                    {{"action": "what", "who": "specific named investors", "when": "specific timing", "success_metric": "measurable outcome"}}
                 ]
             }}
 
-            Be specific, data-driven, and actionable. Reference actual numbers and patterns.
+            REQUIREMENTS:
+            - Name at least 5-10 specific investors throughout the analysis
+            - Use actual health scores and metrics from the data
+            - Reference actual stages and trends for each named investor
+            - Base recommendations on real interests/concerns from the investor profiles
+            - No generic advice - everything should be specific to this actual pipeline
+
+            EXAMPLES of what to DO:
+            - "John Smith at Acme VC (health: 85, trending up) is highly engaged" (GOOD - specific)
+            - "Jane Doe at Beta Fund (health: 25, 14 days silence) needs immediate follow-up" (GOOD - actual data)
+            - "Investors in engaged stage need attention" (BAD - generic, no names)
+            - "Follow up with warm leads" (BAD - not specific)
             """
 
             response = openai_client.chat.completions.create(
@@ -1140,6 +1179,169 @@ class InvestorCRM:
 """
 
         return markdown
+
+    def log_sent_email(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Log a sent email and update investor CRM.
+
+        Args:
+            email_data: Dict with investor_email, subject, body, sent_at, message_id, etc.
+
+        Returns:
+            Dict with 'success' bool and any error messages
+        """
+        try:
+            investor_email = email_data.get("investor_email", "").lower().strip()
+
+            if not investor_email:
+                return {"error": "No investor email provided"}
+
+            # Update investor record if exists
+            investor = self.get_investor_by_email(investor_email)
+
+            if investor:
+                fields = investor.get("fields", {})
+
+                # Increment email count
+                current_sent = fields.get("total_emails_sent", 0)
+
+                # Update last contact date
+                update_data = {
+                    "total_emails_sent": current_sent + 1,
+                    "last_contact_date": email_data.get("sent_at", datetime.now().isoformat())
+                }
+
+                # Recalculate health score
+                updated_fields = fields.copy()
+                updated_fields.update(update_data)
+                new_health_score = self.calculate_health_score(updated_fields)
+                update_data["health_score"] = new_health_score
+
+                # Update record
+                result = self.client.update_record(
+                    self.base_id,
+                    self.table_id,
+                    investor["id"],
+                    update_data
+                )
+
+                if "error" in result:
+                    return {"error": f"Failed to update investor: {result['error']}"}
+
+                return {
+                    "success": True,
+                    "investor_updated": True,
+                    "email_logged": True,
+                    "new_health_score": new_health_score
+                }
+            else:
+                # Investor doesn't exist in CRM yet - just log success
+                return {
+                    "success": True,
+                    "investor_updated": False,
+                    "email_logged": True,
+                    "note": "Investor not in CRM yet"
+                }
+
+        except Exception as e:
+            return {
+                "error": f"Failed to log email: {str(e)}"
+            }
+
+    def update_investor_field(
+        self,
+        investor_email: str,
+        field_name: str,
+        value: Any
+    ) -> Dict[str, Any]:
+        """
+        Update a single field for an investor.
+
+        Args:
+            investor_email: Investor email address
+            field_name: Name of field to update
+            value: New value for the field
+
+        Returns:
+            Dict with 'success' bool and result
+        """
+        try:
+            investor = self.get_investor_by_email(investor_email)
+
+            if not investor:
+                return {"error": "Investor not found"}
+
+            update_data = {field_name: value}
+
+            result = self.client.update_record(
+                self.base_id,
+                self.table_id,
+                investor["id"],
+                update_data
+            )
+
+            if "error" in result:
+                return {"error": result["error"]}
+
+            return {
+                "success": True,
+                "updated_field": field_name,
+                "record_id": investor["id"]
+            }
+
+        except Exception as e:
+            return {"error": f"Failed to update field: {str(e)}"}
+
+    def add_note(self, investor_email: str, note: str) -> Dict[str, Any]:
+        """
+        Add a timestamped note to an investor's record.
+
+        Args:
+            investor_email: Investor email address
+            note: Note text
+
+        Returns:
+            Dict with 'success' bool
+        """
+        try:
+            investor = self.get_investor_by_email(investor_email)
+
+            if not investor:
+                return {"error": "Investor not found"}
+
+            # Get existing notes
+            fields = investor.get("fields", {})
+            existing_notes = fields.get("notes", "")
+
+            # Add timestamp and new note
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            new_note = f"[{timestamp}] {note}"
+
+            if existing_notes:
+                updated_notes = f"{existing_notes}\n\n{new_note}"
+            else:
+                updated_notes = new_note
+
+            # Update record
+            update_data = {"notes": updated_notes}
+
+            result = self.client.update_record(
+                self.base_id,
+                self.table_id,
+                investor["id"],
+                update_data
+            )
+
+            if "error" in result:
+                return {"error": result["error"]}
+
+            return {
+                "success": True,
+                "note_added": True
+            }
+
+        except Exception as e:
+            return {"error": f"Failed to add note: {str(e)}"}
 
 
 # Convenience function
