@@ -12,6 +12,8 @@ from dataclasses import dataclass, asdict
 from email.utils import parsedate_to_datetime
 import re
 import hashlib
+from zoneinfo import ZoneInfo
+import time
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
@@ -161,10 +163,20 @@ class FundraisingState:
 
 class FundraisingIntelligenceEngine:
     """Main orchestrator for the fundraising intelligence workflow"""
-    
+
     def __init__(self):
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.workflow = self._build_workflow()
+        self.local_timezone = self._get_local_timezone()
+
+    def _get_local_timezone(self) -> str:
+        """Get the local timezone name"""
+        try:
+            # Get local timezone offset
+            local_tz = datetime.now().astimezone().tzinfo
+            return str(local_tz) if local_tz else "UTC"
+        except:
+            return "UTC"
     
     def _build_workflow(self) -> StateGraph:
         """Build the LangGraph workflow for fundraising intelligence"""
@@ -583,59 +595,49 @@ class FundraisingIntelligenceEngine:
         """Use LLM to analyze investor conversation with rich temporal and content analysis"""
         try:
             prompt = f"""
-            Analyze this detailed investor conversation for comprehensive fundraising insights. 
-            Pay special attention to timing patterns, response behaviors, and content depth.
-            
+            CRITICAL: You MUST read the ENTIRE email conversation below and extract SPECIFIC details, quotes, and patterns from the ACTUAL content.
+            DO NOT provide generic analysis - reference specific things that were actually said in the emails.
+
             Company Context: {company_context}
             Investor Email: {investor_email}
-            
-            DETAILED CONVERSATION WITH TEMPORAL CONTEXT:
+
+            FULL EMAIL CONVERSATION (READ EVERY EMAIL CAREFULLY):
             {conversation_text}
-            
-            Provide deep analysis and extract the following information in JSON format:
+
+            INSTRUCTIONS:
+            1. Read through EVERY email in the conversation above
+            2. Extract SPECIFIC quotes, requests, concerns, and interests mentioned
+            3. Note ACTUAL topics discussed (not generic categories)
+            4. Identify REAL questions the investor asked
+            5. Track ACTUAL response time patterns from the timestamps
+            6. Note SPECIFIC materials requested or shared
+            7. Reference CONCRETE follow-up commitments made
+
+            Provide analysis in JSON format with SPECIFIC, NON-GENERIC content:
             {{
-                "name": "investor full name if mentioned",
-                "firm": "firm/company name if mentioned", 
-                "relationship_stage": "cold/warm/engaged/interested/declined/deferred/closed",
-                "sentiment_trend": "positive/neutral/negative",
-                "engagement_level": "high/medium/low",
-                "response_patterns": {{
-                    "typical_response_time": "immediate/hours/days/slow",
-                    "preferred_communication_times": "morning/afternoon/evening/weekend",
-                    "response_consistency": "very_consistent/consistent/inconsistent"
-                }},
-                "conversation_dynamics": {{
-                    "who_initiates_more": "investor/founder/balanced",
-                    "email_length_preference": "brief/moderate/detailed",
-                    "formality_level": "formal/professional/casual"
-                }},
-                "investment_signals": {{
-                    "interest_level": "very_high/high/medium/low/none",
-                    "due_diligence_requests": ["list", "of", "requests"],
-                    "concerns_raised": ["list", "of", "concerns"],
-                    "positive_indicators": ["list", "of", "positive", "signals"]
-                }},
-                "content_analysis": {{
-                    "key_topics_discussed": ["topic1", "topic2", "topic3"],
-                    "questions_asked_by_investor": ["question1", "question2"],
-                    "materials_requested": ["material1", "material2"],
-                    "follow_up_commitments": ["commitment1", "commitment2"]
-                }},
-                "temporal_insights": {{
-                    "conversation_momentum": "accelerating/steady/slowing/stalled",
-                    "urgency_indicators": ["urgent_sign1", "urgent_sign2"],
-                    "seasonal_patterns": "any notable timing patterns"
-                }},
-                "next_action_recommended": {{
-                    "primary_action": "specific recommended next step",
-                    "timing": "immediate/within_24h/this_week/next_week",
-                    "rationale": "why this action at this time"
-                }},
-                "relationship_temperature": "hot/warm/lukewarm/cold/frozen",
-                "conversation_summary": "comprehensive summary highlighting key insights, timing patterns, and strategic recommendations"
+                "name": "investor's actual name from email signature/content",
+                "firm": "actual firm name mentioned in emails",
+                "relationship_stage": "based on actual conversation progression",
+                "sentiment_trend": "based on actual language tone in latest emails",
+                "key_interests": ["specific interest 1 they mentioned", "specific interest 2", "specific interest 3"],
+                "objections_raised": ["specific concern 1 they raised", "specific concern 2"],
+                "questions_asked": ["actual question 1 they asked", "actual question 2"],
+                "materials_shared": ["actual material 1 mentioned", "actual material 2"],
+                "next_action_suggested": "specific next step based on where conversation left off",
+                "last_reply_sentiment": "based on tone of most recent investor email",
+                "conversation_summary": "DETAILED summary that: 1) References specific things discussed 2) Quotes actual concerns/interests 3) Notes exact response times 4) Describes conversation arc 5) Provides strategic context. Must be 3-5 sentences minimum with CONCRETE details from the emails."
             }}
-            
-            Focus on actionable insights that can help optimize the fundraising approach for this specific investor.
+
+            IMPORTANT:
+            - If an email mentions "I'm interested in X" - add X to key_interests
+            - If they ask "What about Y?" - add that question to questions_asked
+            - If they say "Can you send Z?" - add Z to materials_shared
+            - If they raise concern "I'm worried about ABC" - add ABC to objections_raised
+            - The conversation_summary MUST reference specific topics, quotes, or details from the actual emails
+            - DO NOT use placeholder text or generic categories
+            - If information is not in the emails, use empty string or empty array
+
+            Return ONLY valid JSON, no markdown or explanation.
             """
             
             response = self.openai_client.chat.completions.create(
@@ -699,7 +701,8 @@ class FundraisingIntelligenceEngine:
                         "preferred_day": most_common_day,
                         "avg_response_hours": avg_response_hours,
                         "total_replies": len(reply_times),
-                        "response_rate": len(reply_times) / len(emails) if emails else 0
+                        "response_rate": len(reply_times) / len(emails) if emails else 0,
+                        "timezone": self.local_timezone
                     }
                     
                 except Exception as e:
@@ -775,63 +778,78 @@ class FundraisingIntelligenceEngine:
         try:
             # Determine strategy type based on relationship stage
             strategy_type = self._determine_strategy_type(context)
-            
+
             prompt = f"""
-            Generate a highly personalized fundraising strategy for this investor based on comprehensive conversation analysis:
-            
+            CRITICAL: Generate a HIGHLY SPECIFIC, PERSONALIZED strategy using ACTUAL conversation details.
+            DO NOT write generic fundraising emails - reference SPECIFIC things from this investor's conversation.
+
             Company Context: {company_context}
-            
-            DETAILED INVESTOR PROFILE:
+
+            ACTUAL INVESTOR CONVERSATION DATA:
             Basic Info:
             - Email: {context.email}
-            - Name: {context.name}
-            - Firm: {context.firm}
+            - Name: {context.name or 'Unknown'}
+            - Firm: {context.firm or 'Unknown'}
             - Relationship Stage: {context.relationship_stage}
             - Overall Sentiment: {context.sentiment_trend}
-            
-            Communication Analysis:
+            - Last Reply Sentiment: {context.last_reply_sentiment}
+
+            Communication Metrics:
             - Last Contact: {context.last_contact_date}
-            - Total Emails Exchanged: {context.total_emails_sent}
-            - Reply Rate: {context.total_replies_received}/{context.total_emails_sent} = {(context.total_replies_received/context.total_emails_sent*100) if context.total_emails_sent > 0 else 0:.1f}%
-            - Conversation Summary: {context.conversation_summary}
-            
-            Key Insights:
-            - Primary Interests: {', '.join(context.key_interests)}
-            - Questions They've Asked: {', '.join(context.questions_asked)}
-            - Concerns/Objections: {', '.join(context.objections_raised)}
-            - Materials They've Requested: {', '.join(context.materials_shared)}
-            - Suggested Next Actions: {context.next_action_suggested}
-            
-            Strategy Context: {strategy_type}
-            
-            INSTRUCTIONS:
-            Based on this rich context, create a personalized strategy that:
-            1. References specific conversation history
-            2. Addresses their stated interests and concerns
-            3. Uses appropriate timing based on their response patterns
-            4. Matches their communication style and preferences
-            5. Provides clear value proposition aligned with their focus areas
-            
-            Generate:
-            1. Personalized email draft (200-300 words) that references specific conversation points
-            2. LinkedIn message (if relevant, 75-100 words)
-            3. Detailed reasoning explaining why this approach will work
-            4. Expected response rate based on historical patterns
-            5. Optimal communication channel sequence
-            6. Best timing for outreach (immediate/hours/days)
-            
+            - Total Emails Sent: {context.total_emails_sent}
+            - Replies Received: {context.total_replies_received}
+            - Reply Rate: {(context.total_replies_received/context.total_emails_sent*100) if context.total_emails_sent > 0 else 0:.1f}%
+            - Average Response Time: {context.response_time_avg:.1f} hours (if available)
+
+            ACTUAL CONVERSATION SUMMARY:
+            {context.conversation_summary or 'No conversation history available'}
+
+            SPECIFIC INSIGHTS FROM ACTUAL EMAILS:
+            - Interests They Actually Mentioned: {', '.join(context.key_interests) if context.key_interests else 'None identified yet'}
+            - Questions They Actually Asked: {', '.join(context.questions_asked) if context.questions_asked else 'None asked yet'}
+            - Concerns They Actually Raised: {', '.join(context.objections_raised) if context.objections_raised else 'None raised yet'}
+            - Materials They Actually Requested: {', '.join(context.materials_shared) if context.materials_shared else 'None requested'}
+            - Next Action (from conversation): {context.next_action_suggested or 'No specific action identified'}
+
+            Strategy Type: {strategy_type}
+
+            MANDATORY REQUIREMENTS FOR EMAIL DRAFT:
+            1. If they asked specific questions - ANSWER those exact questions in the email
+            2. If they raised concerns - ADDRESS those exact concerns by name
+            3. If they mentioned interests - REFERENCE those specific interests
+            4. If they requested materials - MENTION sending those materials
+            5. Reference where the conversation LEFT OFF (use conversation summary)
+            6. Use their ACTUAL name and firm (not placeholders)
+            7. Match their communication style (formal/casual based on sentiment)
+
+            EXAMPLES of what to DO vs NOT DO:
+            - "Following up on your question about our burn rate from last Tuesday" (GOOD - specific)
+            - "I wanted to follow up on our previous conversation" (BAD - generic)
+            - "You mentioned interest in our AI capabilities - here's an update on that" (GOOD - references actual interest)
+            - "I thought you might be interested in our technology" (BAD - assumption, not from actual conversation)
+
+            Generate a strategy with these components:
+            1. Email draft (200-300 words) - MUST reference specific conversation points, questions, or concerns
+            2. LinkedIn message (75-100 words, only if appropriate for relationship stage)
+            3. Reasoning - explain why THIS approach works for THIS investor's specific situation
+            4. Expected response rate (realistic based on their actual reply pattern)
+            5. Channel sequence (based on what's worked with them)
+            6. Timing recommendation (based on their response patterns)
+
             Respond in JSON format:
             {{
-                "email_draft": "highly personalized email that references specific conversation history and interests",
-                "linkedin_message": "personalized linkedin message or empty if not recommended",
-                "reasoning": "detailed explanation of why this strategy is optimal for this specific investor based on conversation patterns",
+                "email_draft": "Personalized email that: 1) Uses their actual name 2) References specific conversation points 3) Answers their questions 4) Addresses their concerns 5) Moves conversation forward based on where it left off",
+                "linkedin_message": "Brief personalized LinkedIn message or empty string if not appropriate",
+                "reasoning": "Explain WHY this strategy works for THIS investor based on: their response patterns, stated interests, concerns raised, and conversation stage",
                 "expected_response_rate": 0.5,
-                "channel_sequence": ["email", "linkedin"],
+                "channel_sequence": ["email"],
                 "optimal_timing": "immediate/within_6h/within_24h/within_week",
                 "personalization_score": 8,
-                "key_talking_points": ["point1", "point2", "point3"],
-                "success_metrics": ["metric1", "metric2"]
+                "key_talking_points": ["Actual point from conversation", "Another specific reference", "Concrete next step"],
+                "success_metrics": ["Specific metric to track"]
             }}
+
+            Remember: This email should feel like it was written by someone who actually READ their previous emails, not a template!
             """
             
             response = self.openai_client.chat.completions.create(
@@ -979,9 +997,12 @@ class FundraisingIntelligenceEngine:
 
             # Build comprehensive investor profile
             prompt = f"""
-            Generate a detailed, personalized investor relationship report for a SINGLE investor in markdown format.
+            CRITICAL: Generate a HIGHLY SPECIFIC, CONTEXT-AWARE investor relationship report using ACTUAL details from the conversation.
+            DO NOT use generic advice - reference SPECIFIC things that happened in the email exchanges.
 
-            This is a focused analysis of ONE specific investor relationship, not a general campaign report.
+            Format: PLAIN TEXT (no markdown symbols, use === for headers)
+
+            This is for ONE specific investor. Use their actual conversation context below.
 
             INVESTOR PROFILE:
             - Name: {ctx.name or "Unknown"}
@@ -1019,63 +1040,81 @@ class FundraisingIntelligenceEngine:
             COMPANY CONTEXT:
             {state.company_context}
 
-            Generate a comprehensive, actionable report with these sections:
+            Generate a comprehensive, actionable report with these sections (use plain text formatting):
 
-            # 1. Investor Overview
+            1. INVESTOR OVERVIEW
+            ==================
             - Who they are, their firm, background
             - Current relationship status and temperature
 
-            # 2. Relationship Analysis
+            2. RELATIONSHIP ANALYSIS
+            =======================
             - Detailed analysis of the relationship progression
             - What stage they're at in the funnel
             - Sentiment analysis and what it means
 
-            # 3. Communication Dynamics
+            3. COMMUNICATION DYNAMICS
+            ========================
             - How responsive they are
             - Their communication style and preferences
             - Best times to reach them and why
             - What type of content resonates
 
-            # 4. Interest & Engagement Signals
+            4. INTEREST & ENGAGEMENT SIGNALS
+            ===============================
             - What they've shown interest in
             - Positive signals and green flags
             - Concerns or objections they've raised
             - Questions they've asked (and what that reveals)
 
-            # 5. What's Working
+            5. WHAT'S WORKING
+            ================
             - Specific tactics or approaches that have gotten good responses
             - Topics that generated engagement
             - Communication patterns that work
 
-            # 6. What's Not Working
+            6. WHAT'S NOT WORKING
+            ====================
             - Missed opportunities or missteps
             - Topics that didn't resonate
             - Timing issues or communication gaps
 
-            # 7. Strategic Recommendations
+            7. STRATEGIC RECOMMENDATIONS
+            ===========================
             - Immediate next steps (within 1 week)
             - Medium-term strategy (1-4 weeks)
             - Long-term relationship building (1-3 months)
             - Specific email/content recommendations
 
-            # 8. Risk Assessment
+            8. RISK ASSESSMENT
+            =================
             - Deal health: strong/moderate/weak/at risk
             - Red flags to watch for
             - Competitive threats or concerns
 
-            # 9. Action Plan
+            9. ACTION PLAN
+            =============
             - Specific, numbered action items with timing
             - Who should do what and when
             - Success metrics to track
 
-            Make this report:
-            - Highly personalized and specific to THIS investor
-            - Data-driven with specific examples and numbers
-            - Actionable with clear next steps
-            - Strategic with both short and long-term thinking
-            - Professional but direct and honest about the relationship status
+            REQUIREMENTS FOR THIS REPORT:
+            1. MUST quote or reference SPECIFIC things from the conversation summary above
+            2. MUST use the ACTUAL interests, questions, and concerns listed (not generic ones)
+            3. MUST reference the ACTUAL response times and communication patterns
+            4. MUST provide SPECIFIC next steps based on where this exact conversation left off
+            5. DO NOT use generic fundraising advice - tailor everything to THIS investor's actual behavior
+            6. If they asked specific questions, reference them by name
+            7. If they raised specific concerns, address those exact concerns
+            8. Use actual names, firms, and topics from the data above
 
-            Use actual details from the conversation summary and metrics. Be specific, not generic.
+            EXAMPLES of what to DO:
+            - "They specifically asked about your burn rate in email #3" (GOOD - specific)
+            - "Address the pricing concerns they raised on Tuesday" (GOOD - concrete)
+            - "Follow up on the deck they requested" (BAD - generic)
+            - "They've shown interest in AI capabilities" vs "They are interested in technology" (GOOD vs BAD)
+
+            Make this report feel like it was written by someone who actually READ this investor's emails.
             """
 
             response = self.openai_client.chat.completions.create(
@@ -1089,10 +1128,10 @@ class FundraisingIntelligenceEngine:
             return response.choices[0].message.content.strip()
 
         except Exception as e:
-            return f"# Investor Relationship Report\n\n**Error generating report:** {str(e)}"
+            return f"INVESTOR RELATIONSHIP REPORT\n============================\n\nError generating report: {str(e)}"
 
     async def _generate_comprehensive_report(self, state: FundraisingState) -> str:
-        """Generate detailed retrospective report in markdown format"""
+        """Generate detailed retrospective report in plain text format"""
         try:
             # Prepare data for report
             total_investors = len(state.investor_contexts)
@@ -1114,10 +1153,32 @@ class FundraisingIntelligenceEngine:
             # Top performing strategies
             positive_sentiment = len([ctx for ctx in state.investor_contexts.values() if ctx.sentiment_trend == "positive"])
 
-            prompt = f"""
-            Generate a comprehensive fundraising retrospective report in markdown format.
+            # Build detailed investor summaries for context
+            investor_summaries = []
+            for email, ctx in state.investor_contexts.items():
+                summary = f"""
+Investor: {ctx.name or email}
+Firm: {ctx.firm or 'Unknown'}
+Stage: {ctx.relationship_stage}
+Sentiment: {ctx.sentiment_trend}
+Emails: {ctx.total_emails_sent} sent, {ctx.total_replies_received} replies
+Interests: {', '.join(ctx.key_interests) if ctx.key_interests else 'None identified'}
+Concerns: {', '.join(ctx.objections_raised) if ctx.objections_raised else 'None raised'}
+Summary: {ctx.conversation_summary[:200]}..."""
+                investor_summaries.append(summary)
 
-            Data Summary:
+            all_summaries = "\n---\n".join(investor_summaries)
+
+            prompt = f"""
+            CRITICAL: Generate a SPECIFIC, CONTEXT-AWARE fundraising report using ACTUAL data from the investor conversations below.
+            DO NOT provide generic fundraising advice - reference SPECIFIC patterns, behaviors, and results from these actual investors.
+
+            Format: PLAIN TEXT (use === for headers, no markdown symbols)
+
+            ACTUAL INVESTOR DATA:
+            {all_summaries}
+
+            Quantitative Metrics:
             - Total Investors Contacted: {total_investors}
             - Total Emails Sent: {total_emails_sent}
             - Total Replies Received: {total_replies}
@@ -1129,17 +1190,59 @@ class FundraisingIntelligenceEngine:
 
             Company Context: {state.company_context}
 
-            Generate a detailed report with these sections:
-            1. Executive Summary
-            2. Key Metrics
-            3. What Worked
-            4. What Didn't Work
-            5. Investor Insights
-            6. Timing Analysis
-            7. Next Steps & Recommendations
-            8. Action Items for Next Sprint
+            INSTRUCTIONS:
+            1. Reference SPECIFIC investors by name/firm when discussing patterns
+            2. Quote ACTUAL interests, concerns, and questions raised (from data above)
+            3. Use REAL metrics and response rates (not generic benchmarks)
+            4. Identify ACTUAL patterns in the data above (don't assume generic patterns)
+            5. Provide SPECIFIC recommendations based on what worked/didn't work for THESE investors
 
-            Make it professional, data-driven, and actionable. Use specific numbers and insights.
+            Generate a detailed report with these sections:
+
+            EXECUTIVE SUMMARY
+            ================
+            (Reference specific investors and their stages, mention actual reply rates and engagement levels)
+
+            KEY METRICS
+            ===========
+            (Use the actual numbers provided, break down by stage/sentiment with specifics)
+
+            WHAT WORKED
+            ===========
+            (Identify SPECIFIC approaches that got positive responses - reference actual investor behavior)
+
+            WHAT DIDN'T WORK
+            ================
+            (Point to SPECIFIC investors who didn't engage well and analyze why based on their data)
+
+            INVESTOR INSIGHTS
+            ================
+            (Group investors by actual patterns seen in the data - interests, response times, concerns)
+
+            TIMING ANALYSIS
+            ==============
+            (Reference actual response time patterns from the data)
+
+            NEXT STEPS & RECOMMENDATIONS
+            ===========================
+            (Specific to these investors and their stages - name names, reference their interests/concerns)
+
+            ACTION ITEMS FOR NEXT SPRINT
+            ============================
+            (Concrete actions for specific investors based on where their conversations left off)
+
+            REQUIREMENTS:
+            - Reference at least 2-3 specific investors by name throughout the report
+            - Quote actual interests/concerns from the data above
+            - Use the actual reply rates and metrics provided
+            - Identify patterns based on THIS data, not generic fundraising patterns
+            - Make recommendations specific to THESE investor relationships
+
+            EXAMPLES of what to DO:
+            - "John Smith at Acme VC showed strong interest in AI capabilities" (GOOD - specific)
+            - "The 3 investors in 'engaged' stage have 65% reply rate vs 20% for cold stage" (GOOD - actual data)
+            - "Investors are interested in technology" (BAD - generic)
+            - "Follow up with warm leads" (BAD - not specific to actual investors)
             """
             
             response = self.openai_client.chat.completions.create(

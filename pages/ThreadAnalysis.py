@@ -29,6 +29,36 @@ from utils.report_generator import generate_fundraising_report
 
 st.set_page_config(page_title="Fundraising Intelligence", layout="wide")
 
+def display_formatted_report(report_text: str):
+    """Display plain text report with formatted headers (big/bold) in UI"""
+    if not report_text:
+        st.info("No report available")
+        return
+
+    lines = report_text.split('\n')
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Check if this is a header (next line has ===)
+        is_header = False
+        if i + 1 < len(lines) and lines[i + 1].strip().startswith('==='):
+            is_header = True
+
+        if is_header:
+            # Display as header
+            st.markdown(f"### {line.strip()}")
+            i += 2  # Skip the header and the === line
+        elif line.strip():
+            # Regular content line
+            st.write(line)
+            i += 1
+        else:
+            # Empty line for spacing
+            st.write("")
+            i += 1
+
 # Page header
 st.title("🧠 Advanced Fundraising Intelligence")
 st.markdown("**LangGraph-Powered Multi-Step Analysis** • Investor Context • Campaign Strategies • Retrospective Reports")
@@ -444,23 +474,118 @@ if analysis_mode == "Single Thread Analysis":
                             st.markdown(f"**Summary:** {ctx.conversation_summary}")
 
         with tab2:
-            st.subheader("📧 Campaign Strategies")
+            st.subheader("📅 Strategic Action Plans")
 
-            campaign_strategies = results.campaign_strategies or []
+            # Get investor context for action planning
+            if investor_contexts:
+                investor_email_key = list(investor_contexts.keys())[0]
+                ctx = investor_contexts.get(investor_email_key)
 
-            if campaign_strategies:
-                for i, strategy in enumerate(campaign_strategies):
-                    with st.expander(f"{strategy.investor_email} - {strategy.strategy_type.replace('_', ' ').title()}"):
-                        st.markdown("**📧 Email Draft:**")
-                        st.text_area("Email Draft", strategy.email_draft, height=150, key=f"email_adv_{i}", label_visibility="collapsed")
+                # Get timing patterns from results
+                timing_patterns = results.timing_patterns or {}
 
-                        st.write(f"**Confidence:** {strategy.confidence_score:.1%}")
-                        st.write(f"**Expected Response:** {strategy.expected_response_rate:.1%}")
+                if ctx:
+                    st.markdown("### 🎯 Recommended Actions by Timeframe")
 
-                        if strategy.reasoning:
-                            st.markdown(f"**Reasoning:** {strategy.reasoning}")
+                    # Immediate Actions (This Week)
+                    with st.expander("📌 This Week - Immediate Actions", expanded=True):
+                        st.markdown("**Priority actions for the next 7 days:**")
+
+                        actions = []
+
+                        # Use actual questions asked
+                        if ctx.questions_asked:
+                            for question in ctx.questions_asked[:2]:
+                                actions.append(f"• Answer their question: \"{question[:80]}...\"")
+
+                        # Use actual objections raised
+                        if ctx.objections_raised:
+                            for objection in ctx.objections_raised[:2]:
+                                actions.append(f"• Address concern: \"{objection[:80]}...\"")
+
+                        # Based on actual materials they requested
+                        if ctx.materials_shared and "request" in str(ctx.materials_shared).lower():
+                            actions.append(f"• Send requested materials")
+
+                        # Based on relationship stage with context
+                        if ctx.relationship_stage in ["cold_outreach", "initial_contact"]:
+                            if ctx.key_interests:
+                                interests_str = ", ".join(ctx.key_interests[:2])
+                                actions.append(f"• Send personalized intro focusing on their interests: {interests_str}")
+                            else:
+                                actions.append("• Research their recent investments and send targeted intro")
+                        elif ctx.relationship_stage in ["engaged", "active_discussion"]:
+                            if ctx.next_action_suggested:
+                                actions.append(f"• {ctx.next_action_suggested}")
+                            else:
+                                actions.append("• Schedule follow-up call based on their interest level")
+
+                        # Based on communication patterns with actual data
+                        timing = timing_patterns.get(investor_email_key, {})
+                        if timing.get("preferred_day") and timing.get("preferred_hour"):
+                            timezone = timing.get("timezone", "")
+                            time_str = f"{timing['preferred_hour']}:00 {timezone}" if timezone else f"{timing['preferred_hour']}:00"
+                            actions.append(f"• ⏰ Best time to reach out: {timing['preferred_day']} around {time_str} (based on their response patterns)")
+
+                        # Based on sentiment with urgency
+                        if ctx.sentiment_trend == "positive":
+                            actions.append("• ⚡ Strike while hot - they're showing positive signals, move to next stage this week")
+                        elif ctx.sentiment_trend == "negative":
+                            actions.append("• 🚨 Address concerns ASAP - relationship needs immediate attention")
+
+                        # Fallback if no specific actions
+                        if not actions:
+                            actions.append("• Review conversation context and send thoughtful follow-up")
+                            if ctx.key_interests:
+                                actions.append(f"• Reference their interests: {', '.join(ctx.key_interests[:3])}")
+
+                        for action in actions:
+                            st.markdown(action)
+
+                    # Short-term (This Month)
+                    with st.expander("📆 This Month - Short-term Strategy"):
+                        st.markdown("**Strategic goals for the next 30 days:**")
+
+                        st.markdown("• Build relationship through value-add touchpoints (industry insights, relevant intros)")
+                        st.markdown("• Share 1-2 meaningful company updates or milestones")
+                        st.markdown("• Progress relationship to next stage in funnel")
+
+                        if ctx.key_interests:
+                            st.markdown(f"• Focus conversations on their interests: {', '.join(ctx.key_interests[:3])}")
+
+                        if ctx.objections_raised:
+                            st.markdown(f"• Address objections: {', '.join(ctx.objections_raised[:2])}")
+
+                    # Long-term (Next Quarter)
+                    with st.expander("📈 Next Quarter - Long-term Relationship Building"):
+                        st.markdown("**Strategic relationship development over 90 days:**")
+
+                        st.markdown("• Establish regular communication cadence (monthly updates)")
+                        st.markdown("• Build multi-threaded relationship (connect with other partners)")
+                        st.markdown("• Position for next fundraising round or follow-on investment")
+                        st.markdown("• Leverage for warm introductions to other investors")
+
+                    # Draft Email Button
+                    st.markdown("---")
+                    if st.button("✉️ Draft Email to Investor", key="draft_email_from_strategies", type="primary", use_container_width=True):
+                        try:
+                            from utils.investor_crm import InvestorCRM
+                            crm = InvestorCRM()
+                            investor_record = crm.get_investor_by_email(investor_email_key)
+
+                            if investor_record:
+                                st.session_state["selected_investor"] = investor_record
+                                st.session_state["compose_email_for"] = investor_email_key
+                                st.session_state["show_email_composer"] = True
+                                st.switch_page("pages/InvestorProfile.py")
+                            else:
+                                st.warning("Investor not found in CRM. Save to CRM first by completing the analysis.")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                else:
+                    st.info("No investor context available")
             else:
-                st.info("No strategies generated")
+                st.info("Run analysis to generate strategic action plans")
 
         with tab3:
             st.subheader("⏰ Timing Intelligence & Communication Patterns")
@@ -485,7 +610,8 @@ if analysis_mode == "Single Thread Analysis":
 
                     with col2:
                         preferred_hour = timing.get("preferred_hour", 10)
-                        time_str = f"{preferred_hour}:00"
+                        timezone = timing.get("timezone", "")
+                        time_str = f"{preferred_hour}:00 {timezone}" if timezone else f"{preferred_hour}:00"
                         st.metric("🕒 Preferred Time", time_str)
 
                     with col3:
@@ -582,7 +708,9 @@ if analysis_mode == "Single Thread Analysis":
                     recommendations = []
 
                     # Timing recommendation
-                    recommendations.append(f"⏰ **Optimal Send Time:** {preferred_day} at {preferred_hour}:00")
+                    timezone = timing.get("timezone", "")
+                    time_display = f"{preferred_hour}:00 {timezone}" if timezone else f"{preferred_hour}:00"
+                    recommendations.append(f"⏰ **Optimal Send Time:** {preferred_day} at {time_display}")
 
                     # Follow-up timing
                     if avg_hours < 24:
@@ -622,13 +750,15 @@ if analysis_mode == "Single Thread Analysis":
             st.subheader("📈 Investor Relationship Report")
 
             if results.retrospective_report:
-                st.markdown(results.retrospective_report)
+                # Display with formatted headers
+                display_formatted_report(results.retrospective_report)
 
+                st.markdown("---")
                 st.download_button(
                     label="📥 Download Report",
                     data=results.retrospective_report,
-                    file_name=f"advanced_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                    mime="text/markdown"
+                    file_name=f"advanced_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain"
                 )
             else:
                 st.info("No report generated")
@@ -851,28 +981,28 @@ elif analysis_mode == "Complete Intelligence Audit":
             
             retrospective_report = results.get("retrospective_report", "") if isinstance(results, dict) else (results.retrospective_report or "")
             if retrospective_report:
-                # Display the report
-                st.markdown(retrospective_report)
-                
-                # Export options
-                col1, col2 = st.columns(2)
+                # Display with formatted headers
+                display_formatted_report(retrospective_report)
+
+                # Export option
+                st.markdown("---")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                
-                with col1:
-                    st.download_button(
-                        label="📥 Download as Markdown (.md)",
-                        data=retrospective_report,
-                        file_name=f"fundraising_retrospective_{timestamp}.md",
-                        mime="text/markdown"
-                    )
-                
-                with col2:
+
+                st.download_button(
+                    label="📥 Download Report (.txt)",
+                    data=retrospective_report,
+                    file_name=f"fundraising_retrospective_{timestamp}.txt",
+                    mime="text/plain"
+                )
+
+                # Removed markdown export since we're using plain text now
+                if False:  # Keep old code for reference but don't execute
                     # Convert markdown to plain text for TXT export
                     import re
                     plain_text = re.sub(r'[#*`_]', '', retrospective_report)
                     plain_text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', plain_text)
                     plain_text = re.sub(r'\n+', '\n', plain_text).strip()
-                    
+
                     st.download_button(
                         label="📄 Download as Text (.txt)",
                         data=plain_text,
